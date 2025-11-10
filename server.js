@@ -226,6 +226,51 @@ app.get('/api/qr/:shortCode/stats', (req, res) => {
   });
 });
 
+// API: Обновить QR код
+app.put('/api/qr/:shortCode', (req, res) => {
+  const { shortCode } = req.params;
+  const { url, title, description } = req.body;
+
+  if (!url) {
+    return res.status(400).json({ error: 'URL обязателен' });
+  }
+
+  // Проверка валидности URL
+  try {
+    new URL(url);
+  } catch (error) {
+    return res.status(400).json({ error: 'Некорректный URL' });
+  }
+
+  db.get('SELECT * FROM qr_codes WHERE short_code = ?', [shortCode], (err, qrCode) => {
+    if (err || !qrCode) {
+      return res.status(404).json({ error: 'QR код не найден' });
+    }
+
+    db.run(
+      'UPDATE qr_codes SET original_url = ?, title = ?, description = ? WHERE short_code = ?',
+      [url, title || '', description || '', shortCode],
+      function(err) {
+        if (err) {
+          console.error('Ошибка обновления:', err);
+          return res.status(500).json({ error: 'Ошибка обновления' });
+        }
+
+        res.json({
+          success: true,
+          message: 'QR код обновлен',
+          qrCode: {
+            short_code: shortCode,
+            original_url: url,
+            title: title || '',
+            description: description || ''
+          }
+        });
+      }
+    );
+  });
+});
+
 // API: Удалить QR код
 app.delete('/api/qr/:shortCode', (req, res) => {
   const { shortCode } = req.params;

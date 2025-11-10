@@ -116,6 +116,9 @@ async function loadQRList() {
                     <button class="btn btn-info btn-sm" onclick="viewStatsModal('${qr.short_code}')">
                         <i class="fas fa-chart-bar"></i> Статистика
                     </button>
+                    <button class="btn btn-primary btn-sm" onclick="editQRCode('${qr.short_code}')">
+                        <i class="fas fa-edit"></i> Редактировать
+                    </button>
                     <button class="btn btn-secondary btn-sm" onclick="copyToClipboard('', '${shortUrl}')">
                         <i class="fas fa-copy"></i> Копировать
                     </button>
@@ -412,10 +415,142 @@ async function deleteQRCode(shortCode) {
     }
 }
 
+// Редактирование QR кода
+async function editQRCode(shortCode) {
+  // Получаем данные текущего QR кода
+  try {
+    const response = await fetch(`/api/qr/list`);
+    const qrCodes = await response.json();
+    const qrCode = qrCodes.find(qr => qr.short_code === shortCode);
+    
+    if (!qrCode) {
+      alert('QR код не найден');
+      return;
+    }
+
+    // Создаем модальное окно для редактирования
+    const modal = document.createElement('div');
+    modal.className = 'modal';
+    modal.style.display = 'block';
+    modal.innerHTML = `
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2><i class="fas fa-edit"></i> Редактировать QR код</h2>
+          <button class="close-btn" onclick="this.closest('.modal').remove()">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+        <div class="modal-body">
+          <form id="editForm" onsubmit="return false;">
+            <div class="form-group">
+              <label for="edit-url">
+                <i class="fas fa-link"></i> Целевой URL *
+              </label>
+              <input 
+                type="url" 
+                id="edit-url" 
+                value="${qrCode.original_url}"
+                required
+              >
+            </div>
+
+            <div class="form-group">
+              <label for="edit-title">
+                <i class="fas fa-heading"></i> Название
+              </label>
+              <input 
+                type="text" 
+                id="edit-title" 
+                value="${qrCode.title || ''}"
+              >
+            </div>
+
+            <div class="form-group">
+              <label for="edit-description">
+                <i class="fas fa-align-left"></i> Описание
+              </label>
+              <textarea 
+                id="edit-description" 
+                rows="3"
+              >${qrCode.description || ''}</textarea>
+            </div>
+
+            <div class="action-buttons">
+              <button type="button" class="btn btn-secondary" onclick="this.closest('.modal').remove()">
+                <i class="fas fa-times"></i> Отмена
+              </button>
+              <button type="submit" class="btn btn-primary">
+                <i class="fas fa-save"></i> Сохранить изменения
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    // Обработчик отправки формы
+    document.getElementById('editForm').onsubmit = async (e) => {
+      e.preventDefault();
+      
+      const url = document.getElementById('edit-url').value;
+      const title = document.getElementById('edit-title').value;
+      const description = document.getElementById('edit-description').value;
+
+      const submitBtn = e.target.querySelector('button[type="submit"]');
+      submitBtn.disabled = true;
+      submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Сохранение...';
+
+      try {
+        const response = await fetch(`/api/qr/${shortCode}`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ url, title, description })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+          alert('✅ QR код успешно обновлен!');
+          modal.remove();
+          loadQRList();
+        } else {
+          alert('Ошибка: ' + (data.error || 'Не удалось обновить'));
+          submitBtn.disabled = false;
+          submitBtn.innerHTML = '<i class="fas fa-save"></i> Сохранить изменения';
+        }
+      } catch (error) {
+        console.error('Ошибка:', error);
+        alert('Ошибка обновления QR кода');
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = '<i class="fas fa-save"></i> Сохранить изменения';
+      }
+    };
+
+    // Закрытие по клику вне модального окна
+    modal.onclick = (e) => {
+      if (e.target === modal) {
+        modal.remove();
+      }
+    };
+  } catch (error) {
+    console.error('Ошибка загрузки QR кода:', error);
+    alert('Не удалось загрузить данные QR кода');
+  }
+}
+
 // Обработка нажатия Escape для закрытия модального окна
 document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
         closeStatsModal();
+        // Закрыть модальное окно редактирования если открыто
+        const editModal = document.querySelector('.modal');
+        if (editModal) {
+            editModal.remove();
+        }
     }
 });
 
