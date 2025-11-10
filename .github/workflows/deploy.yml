@@ -1,0 +1,53 @@
+name: Deploy to VPS
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 📦 Checkout code
+      uses: actions/checkout@v3
+    
+    - name: 🚀 Deploy to VPS
+      uses: appleboy/ssh-action@master
+      with:
+        host: ${{ secrets.VPS_HOST }}
+        username: ${{ secrets.VPS_USERNAME }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        port: ${{ secrets.SSH_PORT || 22 }}
+        script: |
+          echo "🔄 Начинаем деплой..."
+          
+          cd /var/www/qr-generator
+          
+          echo "📥 Получение изменений из GitHub..."
+          git pull origin main
+          
+          echo "📦 Установка зависимостей..."
+          npm install --production
+          
+          echo "🔄 Перезапуск приложения..."
+          pm2 restart qr-generator
+          
+          echo "✅ Деплой завершен успешно!"
+          echo ""
+          echo "📊 Статус приложения:"
+          pm2 status qr-generator
+          
+          echo ""
+          echo "🌐 Приложение доступно на вашем домене"
+    
+    - name: 📢 Notification
+      if: always()
+      run: |
+        if [ ${{ job.status }} == 'success' ]; then
+          echo "✅ Деплой успешно завершен!"
+        else
+          echo "❌ Деплой завершился с ошибкой"
+        fi
+

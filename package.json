@@ -1,0 +1,40 @@
+{
+  "name": "qr-code-generator",
+  "version": "1.0.0",
+  "description": "Генератор динамических QR кодов с отслеживанием переходов",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js",
+    "deploy": "pm2 start ecosystem.config.js",
+    "restart": "pm2 restart qr-generator",
+    "stop": "pm2 stop qr-generator",
+    "logs": "pm2 logs qr-generator",
+    "status": "pm2 status"
+  },
+  "keywords": ["qr", "qr-code", "analytics", "tracking", "url-shortener", "qr-generator"],
+  "author": "",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/YOUR_USERNAME/qr-generator.git"
+  },
+  "bugs": {
+    "url": "https://github.com/YOUR_USERNAME/qr-generator/issues"
+  },
+  "homepage": "https://github.com/YOUR_USERNAME/qr-generator#readme",
+  "dependencies": {
+    "express": "^4.18.2",
+    "sqlite3": "^5.1.6",
+    "qrcode": "^1.5.3",
+    "shortid": "^2.2.16",
+    "ua-parser-js": "^1.0.37",
+    "geoip-lite": "^1.4.7",
+    "body-parser": "^1.20.2",
+    "cors": "^2.8.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}
+

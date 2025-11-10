@@ -1,0 +1,85 @@
+# Зависимости
+node_modules/
+package-lock.json
+
+# База данных
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# Переменные окружения (НЕ коммитить!)
+.env
+
+# Логи
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# Архивы для деплоя
+*.tar.gz
+qr-generator-deploy.tar.gz
+
+# Бэкапы
+*_backup_*.db
+*.backup
+
+# Системные файлы
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+*~
+
+# IDE и редакторы
+.vscode/
+.idea/
+*.swp
+*.swo
+*.swn
+.project
+.classpath
+.c9/
+*.launch
+.settings/
+*.sublime-workspace
+*.sublime-project
+
+# Временные файлы
+*.tmp
+*.temp
+.cache/
+.temp/
+
+# OS
+.AppleDouble
+.LSOverride
+Icon
+.DocumentRevisions-V100
+.fseventsd
+.TemporaryItems
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# Coverage и тесты
+coverage/
+.nyc_output/
+*.lcov
+.jest/
+
+# Misc
+.npm
+.eslintcache
+.node_repl_history
+.yarn-integrity
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+

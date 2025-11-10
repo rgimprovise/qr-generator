@@ -1,0 +1,43 @@
+# Systemd service файл для QR Generator
+# Альтернатива PM2 для тех, кто предпочитает systemd
+# 
+# Установка:
+# 1. sudo cp qr-generator.service /etc/systemd/system/
+# 2. sudo systemctl daemon-reload
+# 3. sudo systemctl enable qr-generator
+# 4. sudo systemctl start qr-generator
+#
+# Управление:
+# sudo systemctl status qr-generator
+# sudo systemctl restart qr-generator
+# sudo systemctl stop qr-generator
+# journalctl -u qr-generator -f
+
+[Unit]
+Description=QR Code Generator with Analytics
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+WorkingDirectory=/var/www/qr-generator
+Environment=NODE_ENV=production
+Environment=PORT=3000
+ExecStart=/usr/bin/node server.js
+Restart=always
+RestartSec=10
+
+# Логирование
+StandardOutput=append:/var/log/qr-generator/out.log
+StandardError=append:/var/log/qr-generator/error.log
+
+# Безопасность
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/www/qr-generator
+
+[Install]
+WantedBy=multi-user.target
+

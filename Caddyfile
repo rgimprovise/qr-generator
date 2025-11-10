@@ -1,0 +1,99 @@
+# Конфигурация Caddy для QR Generator
+# Caddy автоматически получит SSL сертификат от Let's Encrypt!
+
+# Замените на ваш домен или IP адрес
+yourdomain.com {
+    # Автоматический HTTPS (Caddy сделает это сам!)
+    
+    # Логирование
+    log {
+        output file /var/log/caddy/qr-generator-access.log
+        format json
+    }
+    
+    # Проксирование на Node.js приложение
+    reverse_proxy localhost:3000 {
+        # Заголовки
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+    }
+    
+    # Заголовки безопасности
+    header {
+        # Безопасность
+        X-Frame-Options "SAMEORIGIN"
+        X-Content-Type-Options "nosniff"
+        X-XSS-Protection "1; mode=block"
+        Referrer-Policy "no-referrer-when-downgrade"
+        
+        # HSTS (для HTTPS)
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        
+        # CSP
+        Content-Security-Policy "default-src 'self' https: data: 'unsafe-inline' 'unsafe-eval'"
+    }
+    
+    # Кэширование статических файлов
+    @static {
+        path *.jpg *.jpeg *.png *.gif *.ico *.css *.js *.svg *.woff *.woff2 *.ttf *.eot
+    }
+    header @static Cache-Control "public, max-age=2592000, immutable"
+    
+    # Сжатие
+    encode gzip zstd
+    
+    # Лимит размера загружаемых файлов
+    request_body {
+        max_size 10MB
+    }
+}
+
+# Если хотите редирект с www
+www.yourdomain.com {
+    redir https://yourdomain.com{uri} permanent
+}
+
+# ============================================
+# Альтернативная конфигурация для IP адреса
+# (используйте если у вас НЕТ домена)
+# ============================================
+
+# Раскомментируйте эти строки и закомментируйте блок выше:
+
+# :80 {
+#     reverse_proxy localhost:3000 {
+#         header_up X-Real-IP {remote_host}
+#         header_up X-Forwarded-For {remote_host}
+#         header_up X-Forwarded-Proto {scheme}
+#     }
+#     
+#     encode gzip
+# }
+
+# ============================================
+# Продвинутая конфигурация с rate limiting
+# ============================================
+
+# yourdomain.com {
+#     # Rate limiting
+#     rate_limit {
+#         zone dynamic {
+#             key {remote_host}
+#             events 100
+#             window 1m
+#         }
+#     }
+#     
+#     # Остальная конфигурация...
+#     reverse_proxy localhost:3000
+# }
+
+# ============================================
+# Конфигурация для нескольких доменов
+# ============================================
+
+# yourdomain.com, anotherdomain.com {
+#     reverse_proxy localhost:3000
+# }
+
