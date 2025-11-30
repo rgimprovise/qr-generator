@@ -19,7 +19,10 @@ document.addEventListener('DOMContentLoaded', () => {
         btn.addEventListener('click', function() {
             document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
             this.classList.add('active');
-            // Здесь можно добавить логику фильтрации по периоду
+            // Перезагружаем данные дэшборда с новым периодом
+            if (document.getElementById('dashboard-section').classList.contains('active')) {
+                loadDashboardData();
+            }
         });
     });
 });
@@ -712,11 +715,33 @@ async function loadDashboard() {
     }
 }
 
+// Обработка изменения периода группировки
+function handlePeriodGroupChange() {
+    const periodSelect = document.getElementById('periodSelect');
+    const period = periodSelect.value;
+    
+    // Если выбран "По часам", автоматически переключаем на "Сегодня" для лучшей визуализации
+    if (period === 'hours') {
+        const todayBtn = document.querySelector('.period-btn[data-period="today"]');
+        if (todayBtn) {
+            document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
+            todayBtn.classList.add('active');
+        }
+    }
+    
+    // Перезагружаем данные
+    loadDashboardData();
+}
+
 // Загрузка данных для дэшборда (для нескольких QR кодов)
 async function loadDashboardData() {
     const periodSelect = document.getElementById('periodSelect');
     const dashboardContent = document.getElementById('dashboardContent');
     const period = periodSelect.value;
+    
+    // Получаем выбранный временной период (Сегодня, Вчера, Неделя, Месяц)
+    const activePeriodBtn = document.querySelector('.period-btn.active');
+    const dateRange = activePeriodBtn ? activePeriodBtn.dataset.period : 'today';
 
     // Получаем все выбранные QR коды
     const selectedCheckboxes = document.querySelectorAll('.qr-checkbox:checked');
@@ -751,7 +776,7 @@ async function loadDashboardData() {
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 15000);
             
-            return fetch(`/api/qr/${shortCode}/timeline?period=${period}&limit=100`, {
+            return fetch(`/api/qr/${shortCode}/timeline?period=${period}&dateRange=${dateRange}&limit=100`, {
                 signal: controller.signal
             })
                 .then(res => {
@@ -1124,6 +1149,16 @@ function showSection(sectionId) {
     // Загружаем данные для дэшборда если нужно
     if (sectionId === 'dashboard') {
         loadMetrics();
+        // Убеждаемся что есть активная кнопка периода
+        const activePeriodBtn = document.querySelector('.period-btn.active');
+        if (!activePeriodBtn) {
+            const todayBtn = document.querySelector('.period-btn[data-period="today"]');
+            if (todayBtn) {
+                todayBtn.classList.add('active');
+            }
+        }
+        // Загружаем данные дэшборда
+        loadDashboardData();
     }
 }
 

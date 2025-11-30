@@ -229,63 +229,106 @@ app.get('/api/qr/:shortCode/stats', (req, res) => {
 // API: Получить хронологические данные для дэшборда
 app.get('/api/qr/:shortCode/timeline', (req, res) => {
   const { shortCode } = req.params;
-  const { period = 'days', limit = 30 } = req.query; // period: 'days', 'hours', 'weeks'
+  const { period = 'days', limit = 30, dateRange = 'today' } = req.query; // period: 'days', 'hours', 'weeks', dateRange: 'today', 'yesterday', 'week', 'month'
 
   db.get('SELECT * FROM qr_codes WHERE short_code = ?', [shortCode], (err, qrCode) => {
     if (err || !qrCode) {
       return res.status(404).json({ error: 'QR код не найден' });
     }
 
-    db.all('SELECT scan_time FROM scans WHERE qr_code_id = ? ORDER BY scan_time ASC', [qrCode.id], (err, scans) => {
-      if (err) {
-        return res.status(500).json({ error: 'Ошибка получения данных' });
-      }
+    // Вычисляем диапазон дат в зависимости от выбранного периода
+    const now = new Date();
+    let dateFrom, dateTo;
+    
+    switch (dateRange) {
+      case 'today':
+        dateFrom = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+        dateTo = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+        break;
+      case 'yesterday':
+        const yesterday = new Date(now);
+        yesterday.setDate(yesterday.getDate() - 1);
+        dateFrom = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate(), 0, 0, 0);
+        dateTo = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate(), 23, 59, 59);
+        break;
+      case 'week':
+        dateFrom = new Date(now);
+        dateFrom.setDate(dateFrom.getDate() - 7);
+        dateFrom.setHours(0, 0, 0, 0);
+        dateTo = new Date(now);
+        dateTo.setHours(23, 59, 59, 999);
+        break;
+      case 'month':
+        dateFrom = new Date(now);
+        dateFrom.setDate(dateFrom.getDate() - 30);
+        dateFrom.setHours(0, 0, 0, 0);
+        dateTo = new Date(now);
+        dateTo.setHours(23, 59, 59, 999);
+        break;
+      default:
+        // По умолчанию - сегодня
+        dateFrom = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+        dateTo = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+    }
 
-      const timeline = {};
-      const now = new Date();
+    // Форматируем даты для SQL запроса
+    const dateFromStr = dateFrom.toISOString();
+    const dateToStr = dateTo.toISOString();
 
-      scans.forEach(scan => {
-        if (!scan.scan_time) return;
-        
-        const date = new Date(scan.scan_time);
-        let key;
-
-        if (period === 'hours') {
-          // Группировка по часам (последние 24 часа)
-          key = date.toISOString().slice(0, 13) + ':00:00.000Z';
-        } else if (period === 'weeks') {
-          // Группировка по неделям
-          const weekStart = new Date(date);
-          weekStart.setDate(date.getDate() - date.getDay());
-          key = weekStart.toISOString().split('T')[0];
-        } else {
-          // Группировка по дням (по умолчанию)
-          key = date.toISOString().split('T')[0];
+    db.all(
+      'SELECT scan_time FROM scans WHERE qr_code_id = ? AND scan_time >= ? AND scan_time <= ? ORDER BY scan_time ASC',
+      [qrCode.id, dateFromStr, dateToStr],
+      (err, scans) => {
+        if (err) {
+          return res.status(500).json({ error: 'Ошибка получения данных' });
         }
 
-        timeline[key] = (timeline[key] || 0) + 1;
-      });
+        const timeline = {};
 
-      // Преобразуем в массив и сортируем
-      const timelineArray = Object.entries(timeline)
-        .map(([date, count]) => ({ date, count }))
-        .sort((a, b) => new Date(a.date) - new Date(b.date));
+        scans.forEach(scan => {
+          if (!scan.scan_time) return;
+          
+          const date = new Date(scan.scan_time);
+          let key;
 
-      // Ограничиваем количество точек
-      const limitedTimeline = timelineArray.slice(-parseInt(limit));
+          if (period === 'hours') {
+            // Группировка по часам
+            key = date.toISOString().slice(0, 13) + ':00:00.000Z';
+          } else if (period === 'weeks') {
+            // Группировка по неделям
+            const weekStart = new Date(date);
+            weekStart.setDate(date.getDate() - date.getDay());
+            key = weekStart.toISOString().split('T')[0];
+          } else {
+            // Группировка по дням (по умолчанию)
+            key = date.toISOString().split('T')[0];
+          }
 
-      res.json({
-        qrCode: {
-          id: qrCode.id,
-          short_code: qrCode.short_code,
-          title: qrCode.title,
-          total_scans: qrCode.total_scans
-        },
-        timeline: limitedTimeline,
-        period,
-        total_points: limitedTimeline.length
-      });
-    });
+          timeline[key] = (timeline[key] || 0) + 1;
+        });
+
+        // Преобразуем в массив и сортируем
+        const timelineArray = Object.entries(timeline)
+          .map(([date, count]) => ({ date, count }))
+          .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+        // Ограничиваем количество точек только если нужно
+        const limitedTimeline = timelineArray.slice(-parseInt(limit));
+
+        res.json({
+          qrCode: {
+            id: qrCode.id,
+            short_code: qrCode.short_code,
+            title: qrCode.title,
+            total_scans: qrCode.total_scans
+          },
+          timeline: limitedTimeline,
+          period,
+          dateRange,
+          total_points: limitedTimeline.length
+        });
+      }
+    );
   });
 });
 
