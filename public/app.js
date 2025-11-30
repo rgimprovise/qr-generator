@@ -1,7 +1,6 @@
 // Глобальные переменные
 let currentQRCode = null;
 let dashboardChart = null; // Chart.js instance
-let dashboardChart = null; // Chart.js instance
 
 // Инициализация
 document.addEventListener('DOMContentLoaded', () => {
@@ -76,10 +75,29 @@ function displayQRResult(data) {
 // Загрузка списка QR кодов
 async function loadQRList() {
     const qrListDiv = document.getElementById('qrList');
+    
+    if (!qrListDiv) {
+        console.error('Элемент qrList не найден');
+        return;
+    }
+    
     qrListDiv.innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin"></i> Загрузка...</div>';
 
     try {
-        const response = await fetch('/api/qr/list');
+        // Создаем AbortController для таймаута
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000);
+        
+        const response = await fetch('/api/qr/list', {
+            signal: controller.signal
+        });
+        
+        clearTimeout(timeoutId);
+        
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
         const qrCodes = await response.json();
 
         if (qrCodes.length === 0) {
@@ -136,12 +154,28 @@ async function loadQRList() {
         });
     } catch (error) {
         console.error('Ошибка загрузки списка:', error);
-        qrListDiv.innerHTML = `
-            <div class="empty-state">
-                <i class="fas fa-exclamation-triangle"></i>
-                <p>Ошибка загрузки данных</p>
-            </div>
-        `;
+        
+        if (error.name === 'AbortError') {
+            qrListDiv.innerHTML = `
+                <div class="empty-state">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <p>Превышено время ожидания загрузки</p>
+                    <button class="btn btn-secondary btn-sm" onclick="loadQRList()" style="margin-top: 1rem;">
+                        <i class="fas fa-redo"></i> Попробовать снова
+                    </button>
+                </div>
+            `;
+        } else {
+            qrListDiv.innerHTML = `
+                <div class="empty-state">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <p>Ошибка загрузки данных: ${error.message}</p>
+                    <button class="btn btn-secondary btn-sm" onclick="loadQRList()" style="margin-top: 1rem;">
+                        <i class="fas fa-redo"></i> Попробовать снова
+                    </button>
+                </div>
+            `;
+        }
     }
 }
 
@@ -569,8 +603,26 @@ document.addEventListener('keydown', (e) => {
 async function loadDashboard() {
     const qrCodesCheckboxes = document.getElementById('qrCodesCheckboxes');
     
+    if (!qrCodesCheckboxes) {
+        console.error('Элемент qrCodesCheckboxes не найден');
+        return;
+    }
+    
     try {
-        const response = await fetch('/api/qr/list');
+        // Создаем AbortController для таймаута
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000);
+        
+        const response = await fetch('/api/qr/list', {
+            signal: controller.signal
+        });
+        
+        clearTimeout(timeoutId);
+        
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
         const qrCodes = await response.json();
 
         if (qrCodes.length === 0) {
@@ -619,12 +671,28 @@ async function loadDashboard() {
         }
     } catch (error) {
         console.error('Ошибка загрузки QR кодов для дэшборда:', error);
-        qrCodesCheckboxes.innerHTML = `
-            <div class="empty-state">
-                <i class="fas fa-exclamation-triangle"></i>
-                <p>Ошибка загрузки QR кодов</p>
-            </div>
-        `;
+        
+        if (error.name === 'AbortError') {
+            qrCodesCheckboxes.innerHTML = `
+                <div class="empty-state">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <p>Превышено время ожидания загрузки</p>
+                    <button class="btn btn-secondary btn-sm" onclick="loadDashboard()" style="margin-top: 1rem;">
+                        <i class="fas fa-redo"></i> Попробовать снова
+                    </button>
+                </div>
+            `;
+        } else {
+            qrCodesCheckboxes.innerHTML = `
+                <div class="empty-state">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <p>Ошибка загрузки QR кодов: ${error.message}</p>
+                    <button class="btn btn-secondary btn-sm" onclick="loadDashboard()" style="margin-top: 1rem;">
+                        <i class="fas fa-redo"></i> Попробовать снова
+                    </button>
+                </div>
+            `;
+        }
     }
 }
 
@@ -663,10 +731,26 @@ async function loadDashboardData() {
 
     try {
         // Загружаем данные для всех выбранных QR кодов параллельно
-        const promises = selectedCodes.map(shortCode => 
-            fetch(`/api/qr/${shortCode}/timeline?period=${period}&limit=100`)
-                .then(res => res.json())
-        );
+        const promises = selectedCodes.map(shortCode => {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 15000);
+            
+            return fetch(`/api/qr/${shortCode}/timeline?period=${period}&limit=100`, {
+                signal: controller.signal
+            })
+                .then(res => {
+                    clearTimeout(timeoutId);
+                    if (!res.ok) {
+                        throw new Error(`HTTP error! status: ${res.status}`);
+                    }
+                    return res.json();
+                })
+                .catch(error => {
+                    clearTimeout(timeoutId);
+                    console.error(`Ошибка загрузки данных для ${shortCode}:`, error);
+                    return { error: error.message, shortCode };
+                });
+        });
 
         const allData = await Promise.all(promises);
 
