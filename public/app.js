@@ -900,6 +900,18 @@ function displayDashboard(allData, period) {
     const totalScans = allCounts.reduce((a, b) => a + b, 0);
     const maxScans = Math.max(...allCounts, 0);
     const avgScans = allCounts.length > 0 ? (totalScans / allCounts.length).toFixed(1) : 0;
+    
+    // Адаптивный stepSize для оси Y в зависимости от максимального значения
+    let yAxisStepSize = 1;
+    if (maxScans > 1000) {
+        yAxisStepSize = 100;
+    } else if (maxScans > 100) {
+        yAxisStepSize = 10;
+    } else if (maxScans > 50) {
+        yAxisStepSize = 5;
+    } else if (maxScans > 20) {
+        yAxisStepSize = 2;
+    }
 
     // HTML для дэшборда
     let html = `
@@ -938,13 +950,49 @@ function displayDashboard(allData, period) {
         dashboardChart.destroy();
     }
 
+    // Адаптивные настройки в зависимости от количества точек данных
+    const dataPointsCount = labels.length;
+    const maxPointsForFullLabels = 30; // Максимум точек для полного отображения всех подписей
+    const maxPointsForMediumLabels = 60; // Максимум точек для среднего отображения
+    
+    // Адаптируем размер точек
+    const pointRadius = dataPointsCount > 50 ? 2 : dataPointsCount > 30 ? 2.5 : 3;
+    const pointHoverRadius = dataPointsCount > 50 ? 4 : dataPointsCount > 30 ? 4.5 : 5;
+    
+    // Адаптируем отображение подписей на оси X
+    let xAxisTicksConfig = {
+        maxRotation: 45,
+        minRotation: 45
+    };
+    
+    if (dataPointsCount > maxPointsForFullLabels) {
+        // Пропускаем подписи - показываем каждую N-ю
+        const skipStep = Math.ceil(dataPointsCount / maxPointsForFullLabels);
+        xAxisTicksConfig.callback = function(value, index) {
+            // Показываем подпись только для каждого N-го элемента
+            if (index % skipStep === 0 || index === labels.length - 1) {
+                return labels[index];
+            }
+            return '';
+        };
+        xAxisTicksConfig.maxRotation = 60;
+        xAxisTicksConfig.minRotation = 60;
+    }
+    
+    // Адаптируем размер шрифта подписей
+    const fontSize = dataPointsCount > 50 ? 10 : dataPointsCount > 30 ? 11 : 12;
+    
     // Создаем новый график
     const ctx = document.getElementById('timelineChart').getContext('2d');
     dashboardChart = new Chart(ctx, {
         type: 'line',
         data: {
             labels: labels,
-            datasets: datasets
+            datasets: datasets.map(dataset => ({
+                ...dataset,
+                pointRadius: pointRadius,
+                pointHoverRadius: pointHoverRadius
+            }))
         },
         options: {
             responsive: true,
@@ -953,6 +1001,13 @@ function displayDashboard(allData, period) {
                 legend: {
                     display: true,
                     position: 'top',
+                    labels: {
+                        boxWidth: 12,
+                        padding: 10,
+                        font: {
+                            size: fontSize
+                        }
+                    }
                 },
                 tooltip: {
                     mode: 'index',
@@ -961,6 +1016,12 @@ function displayDashboard(allData, period) {
                         label: function(context) {
                             return `${context.dataset.label}: ${context.parsed.y} переходов`;
                         }
+                    },
+                    titleFont: {
+                        size: fontSize
+                    },
+                    bodyFont: {
+                        size: fontSize
                     }
                 }
             },
@@ -968,22 +1029,42 @@ function displayDashboard(allData, period) {
                 y: {
                     beginAtZero: true,
                     ticks: {
-                        stepSize: 1,
-                        precision: 0
+                        stepSize: yAxisStepSize,
+                        precision: 0,
+                        font: {
+                            size: fontSize
+                        },
+                        // Адаптивное форматирование больших чисел
+                        callback: function(value) {
+                            if (value >= 1000) {
+                                return (value / 1000).toFixed(1) + 'k';
+                            }
+                            return value;
+                        }
                     },
                     title: {
                         display: true,
-                        text: 'Количество переходов'
+                        text: 'Количество переходов',
+                        font: {
+                            size: fontSize + 1
+                        }
                     }
                 },
                 x: {
                     title: {
                         display: true,
-                        text: period === 'hours' ? 'Время' : period === 'weeks' ? 'Неделя' : 'Дата'
+                        text: period === 'hours' ? 'Время' : period === 'weeks' ? 'Неделя' : 'Дата',
+                        font: {
+                            size: fontSize + 1
+                        }
                     },
                     ticks: {
-                        maxRotation: 45,
-                        minRotation: 45
+                        ...xAxisTicksConfig,
+                        font: {
+                            size: fontSize
+                        },
+                        autoSkip: dataPointsCount > maxPointsForFullLabels,
+                        maxTicksLimit: dataPointsCount > maxPointsForFullLabels ? maxPointsForFullLabels : undefined
                     }
                 }
             },
