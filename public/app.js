@@ -6,11 +6,21 @@ let dashboardChart = null; // Chart.js instance
 document.addEventListener('DOMContentLoaded', () => {
     loadQRList();
     loadDashboard();
+    loadMetrics();
     
     // Обработчик формы создания QR кода
     document.getElementById('createForm').addEventListener('submit', async (e) => {
         e.preventDefault();
         await createQRCode();
+    });
+    
+    // Обработчики кнопок периода
+    document.querySelectorAll('.period-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
+            this.classList.add('active');
+            // Здесь можно добавить логику фильтрации по периоду
+        });
     });
 });
 
@@ -45,6 +55,7 @@ async function createQRCode() {
             // Обновление списка и дэшборда
             loadQRList();
             loadDashboard();
+            loadMetrics();
             
             // Прокрутка к результату
             document.getElementById('result').scrollIntoView({ behavior: 'smooth' });
@@ -978,5 +989,114 @@ function displayDashboard(allData, period) {
             }
         }
     });
+}
+
+// ==================== НАВИГАЦИЯ И МЕТРИКИ ====================
+
+// Переключение между секциями
+function showSection(sectionId) {
+    // Скрываем все секции
+    document.querySelectorAll('.content-section').forEach(section => {
+        section.classList.remove('active');
+    });
+    
+    // Убираем активный класс у всех навигационных элементов
+    document.querySelectorAll('.nav-item').forEach(item => {
+        item.classList.remove('active');
+    });
+    
+    // Показываем выбранную секцию
+    const section = document.getElementById(`${sectionId}-section`);
+    if (section) {
+        section.classList.add('active');
+    }
+    
+    // Активируем соответствующий навигационный элемент
+    const navItem = document.querySelector(`a[href="#${sectionId}"]`);
+    if (navItem) {
+        navItem.classList.add('active');
+    }
+    
+    // Обновляем заголовок страницы
+    const titles = {
+        'create': 'Создать QR код',
+        'dashboard': 'Дэшборд аналитики',
+        'list': 'Все QR коды'
+    };
+    
+    const pageTitle = document.getElementById('pageTitle');
+    if (pageTitle) {
+        pageTitle.textContent = titles[sectionId] || 'QR Generator';
+    }
+    
+    // Показываем/скрываем селектор периода
+    const periodSelector = document.getElementById('periodSelector');
+    if (periodSelector) {
+        periodSelector.style.display = sectionId === 'dashboard' ? 'flex' : 'none';
+    }
+    
+    // Загружаем данные для дэшборда если нужно
+    if (sectionId === 'dashboard') {
+        loadMetrics();
+    }
+}
+
+// Обновление текущей секции
+function refreshCurrentSection() {
+    const activeSection = document.querySelector('.content-section.active');
+    if (activeSection) {
+        const sectionId = activeSection.id.replace('-section', '');
+        if (sectionId === 'list') {
+            loadQRList();
+        } else if (sectionId === 'dashboard') {
+            loadDashboard();
+            loadDashboardData();
+            loadMetrics();
+        }
+    }
+}
+
+// Загрузка метрик для дэшборда
+async function loadMetrics() {
+    try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000);
+        
+        const response = await fetch('/api/qr/list', {
+            signal: controller.signal
+        });
+        
+        clearTimeout(timeoutId);
+        
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
+        const qrCodes = await response.json();
+        
+        // Подсчитываем метрики
+        const totalQR = qrCodes.length;
+        const totalScans = qrCodes.reduce((sum, qr) => sum + (qr.total_scans || 0), 0);
+        const activeQR = qrCodes.filter(qr => (qr.total_scans || 0) > 0).length;
+        const avgScans = totalQR > 0 ? Math.round(totalScans / totalQR) : 0;
+        
+        // Обновляем карточки метрик
+        updateMetricCard('metricTotalQR', totalQR);
+        updateMetricCard('metricTotalScans', totalScans);
+        updateMetricCard('metricActiveQR', activeQR);
+        updateMetricCard('metricAvgScans', avgScans);
+        
+    } catch (error) {
+        console.error('Ошибка загрузки метрик:', error);
+        // Оставляем значения по умолчанию
+    }
+}
+
+// Обновление карточки метрики
+function updateMetricCard(elementId, value) {
+    const element = document.getElementById(elementId);
+    if (element) {
+        element.textContent = value.toLocaleString('ru-RU');
+    }
 }
 

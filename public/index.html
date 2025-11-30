@@ -10,14 +10,59 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1><i class="fas fa-qrcode"></i> Генератор динамических QR кодов</h1>
-            <p class="subtitle">Создавайте QR коды и отслеживайте все данные о переходах</p>
+    <!-- Левая боковая панель -->
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <div class="logo">
+                <i class="fas fa-qrcode"></i>
+                <span>QR Generator</span>
+            </div>
+        </div>
+        <nav class="sidebar-nav">
+            <a href="#create" class="nav-item active" onclick="showSection('create'); return false;">
+                <i class="fas fa-plus-circle"></i>
+                <span>Создать QR</span>
+            </a>
+            <a href="#dashboard" class="nav-item" onclick="showSection('dashboard'); return false;">
+                <i class="fas fa-chart-line"></i>
+                <span>Дэшборд</span>
+            </a>
+            <a href="#list" class="nav-item" onclick="showSection('list'); return false;">
+                <i class="fas fa-list"></i>
+                <span>Все QR коды</span>
+            </a>
+        </nav>
+    </aside>
+
+    <!-- Основной контент -->
+    <div class="main-content">
+        <!-- Верхняя панель -->
+        <header class="top-header">
+            <div class="header-left">
+                <h1 class="page-title" id="pageTitle">Создать QR код</h1>
+            </div>
+            <div class="header-right">
+                <div class="period-selector" id="periodSelector" style="display: none;">
+                    <button class="period-btn active" data-period="today">Сегодня</button>
+                    <button class="period-btn" data-period="yesterday">Вчера</button>
+                    <button class="period-btn" data-period="week">Неделя</button>
+                    <button class="period-btn" data-period="month">Месяц</button>
+                    <select id="periodSelect" class="period-dropdown" onchange="loadDashboardData()">
+                        <option value="days">По дням</option>
+                        <option value="hours">По часам</option>
+                        <option value="weeks">По неделям</option>
+                    </select>
+                </div>
+                <button class="btn-icon" onclick="refreshCurrentSection()" title="Обновить">
+                    <i class="fas fa-sync-alt"></i>
+                </button>
+            </div>
         </header>
 
+        <div class="container">
+
         <!-- Форма создания QR кода -->
-        <section class="create-section">
+        <section id="create-section" class="content-section active">
             <div class="card">
                 <h2><i class="fas fa-plus-circle"></i> Создать новый QR код</h2>
                 <form id="createForm">
@@ -96,7 +141,30 @@
         </section>
 
         <!-- Дэшборд аналитики - Диаграмма -->
-        <section class="dashboard-section">
+        <section id="dashboard-section" class="content-section">
+            <!-- Карточки метрик -->
+            <div class="metrics-cards" id="metricsCards">
+                <div class="metric-card">
+                    <div class="metric-label">Всего QR кодов</div>
+                    <div class="metric-value" id="metricTotalQR">-</div>
+                    <div class="metric-change" id="metricTotalQRChange">-</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Всего переходов</div>
+                    <div class="metric-value" id="metricTotalScans">-</div>
+                    <div class="metric-change" id="metricTotalScansChange">-</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Активных QR</div>
+                    <div class="metric-value" id="metricActiveQR">-</div>
+                    <div class="metric-change" id="metricActiveQRChange">-</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-label">Среднее за период</div>
+                    <div class="metric-value" id="metricAvgScans">-</div>
+                    <div class="metric-change" id="metricAvgScansChange">-</div>
+                </div>
+            </div>
             <div class="card">
                 <div class="section-header">
                     <h2><i class="fas fa-chart-line"></i> Хронологические диаграммы переходов</h2>
@@ -141,7 +209,7 @@
         </section>
 
         <!-- Список QR кодов -->
-        <section class="list-section">
+        <section id="list-section" class="content-section">
             <div class="card">
                 <div class="section-header">
                     <h2><i class="fas fa-list"></i> Все QR коды</h2>
@@ -173,9 +241,8 @@
         </div>
     </div>
 
-    <footer>
-        <p>© 2025 Генератор динамических QR кодов | Создано с ❤️</p>
-    </footer>
+        </div>
+    </div>
 
     <script src="app.js"></script>
 </body>

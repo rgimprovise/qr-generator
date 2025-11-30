@@ -23,44 +23,253 @@
 
 body {
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: #f5f7fa;
     min-height: 100vh;
     color: var(--dark);
     line-height: 1.6;
+    margin: 0;
+    padding: 0;
+    display: flex;
+}
+
+/* Левая боковая панель */
+.sidebar {
+    width: 240px;
+    background: #ffffff;
+    border-right: 1px solid var(--border);
+    height: 100vh;
+    position: fixed;
+    left: 0;
+    top: 0;
+    display: flex;
+    flex-direction: column;
+    z-index: 100;
+}
+
+.sidebar-header {
+    padding: 1.5rem 1.25rem;
+    border-bottom: 1px solid var(--border);
+}
+
+.logo {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--primary-color);
+}
+
+.logo i {
+    font-size: 1.5rem;
+}
+
+.sidebar-nav {
+    flex: 1;
+    padding: 1rem 0;
+}
+
+.nav-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.875rem 1.25rem;
+    color: var(--gray);
+    text-decoration: none;
+    transition: all 0.2s ease;
+    border-left: 3px solid transparent;
+}
+
+.nav-item:hover {
+    background: var(--light);
+    color: var(--dark);
+}
+
+.nav-item.active {
+    background: rgba(99, 102, 241, 0.1);
+    color: var(--primary-color);
+    border-left-color: var(--primary-color);
+    font-weight: 600;
+}
+
+.nav-item i {
+    width: 20px;
+    text-align: center;
+}
+
+/* Основной контент */
+.main-content {
+    flex: 1;
+    margin-left: 240px;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Верхняя панель */
+.top-header {
+    background: #ffffff;
+    border-bottom: 1px solid var(--border);
+    padding: 1rem 2rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.page-title {
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: var(--dark);
+    margin: 0;
+}
+
+.header-right {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.period-selector {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.period-btn {
+    padding: 0.5rem 1rem;
+    border: 1px solid var(--border);
+    background: var(--white);
+    color: var(--gray);
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.875rem;
+    transition: all 0.2s ease;
+}
+
+.period-btn:hover {
+    border-color: var(--primary-color);
+    color: var(--primary-color);
+}
+
+.period-btn.active {
+    background: var(--primary-color);
+    color: var(--white);
+    border-color: var(--primary-color);
+}
+
+.period-dropdown {
+    padding: 0.5rem 1rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 0.875rem;
+    background: var(--white);
+    color: var(--dark);
+    cursor: pointer;
+}
+
+.btn-icon {
+    width: 36px;
+    height: 36px;
+    border: 1px solid var(--border);
+    background: var(--white);
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    color: var(--gray);
+    transition: all 0.2s ease;
+}
+
+.btn-icon:hover {
+    border-color: var(--primary-color);
+    color: var(--primary-color);
+    background: rgba(99, 102, 241, 0.05);
 }
 
 .container {
-    max-width: 1200px;
-    margin: 0 auto;
+    flex: 1;
     padding: 2rem;
+    max-width: 1400px;
+    width: 100%;
+    margin: 0 auto;
 }
 
-header {
-    text-align: center;
-    color: var(--white);
-    margin-bottom: 3rem;
-    animation: fadeInDown 0.6s ease-out;
+/* Секции контента */
+.content-section {
+    display: none;
 }
 
-header h1 {
-    font-size: 2.5rem;
-    font-weight: 700;
+.content-section.active {
+    display: block;
+}
+
+/* Карточки метрик */
+.metrics-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 1.5rem;
+    margin-bottom: 2rem;
+}
+
+.metric-card {
+    background: var(--white);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.5rem;
+    transition: all 0.2s ease;
+}
+
+.metric-card:hover {
+    box-shadow: var(--shadow);
+    transform: translateY(-2px);
+}
+
+.metric-label {
+    font-size: 0.875rem;
+    color: var(--gray);
     margin-bottom: 0.5rem;
-    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.2);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
 }
 
-header .subtitle {
-    font-size: 1.1rem;
-    opacity: 0.95;
+.metric-value {
+    font-size: 2rem;
+    font-weight: 700;
+    color: var(--dark);
+    margin-bottom: 0.5rem;
+}
+
+.metric-change {
+    font-size: 0.875rem;
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.metric-change.positive {
+    color: var(--success-color);
+}
+
+.metric-change.negative {
+    color: var(--danger-color);
+}
+
+.metric-change.neutral {
+    color: var(--gray);
 }
 
 .card {
     background: var(--white);
-    border-radius: 16px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
     padding: 2rem;
     margin-bottom: 2rem;
-    box-shadow: var(--shadow-lg);
-    animation: fadeInUp 0.6s ease-out;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
 }
 
 .card h2 {
@@ -132,13 +341,14 @@ header .subtitle {
 }
 
 .btn-primary {
-    background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+    background: var(--primary-color);
     color: var(--white);
     width: 100%;
     justify-content: center;
 }
 
 .btn-primary:hover {
+    background: var(--primary-dark);
     transform: translateY(-2px);
     box-shadow: var(--shadow-lg);
 }
@@ -430,8 +640,9 @@ header .subtitle {
 }
 
 .stat-card {
-    background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
-    color: var(--white);
+    background: var(--white);
+    border: 1px solid var(--border);
+    color: var(--dark);
     padding: 1.5rem;
     border-radius: 12px;
     text-align: center;
@@ -594,8 +805,29 @@ footer {
 
 /* Адаптивность */
 @media (max-width: 768px) {
+    .sidebar {
+        width: 200px;
+    }
+    
+    .main-content {
+        margin-left: 200px;
+    }
+    
     .container {
         padding: 1rem;
+    }
+    
+    .top-header {
+        padding: 1rem;
+        flex-wrap: wrap;
+    }
+    
+    .period-selector {
+        flex-wrap: wrap;
+    }
+    
+    .metrics-cards {
+        grid-template-columns: 1fr;
     }
 
     header h1 {
@@ -821,7 +1053,8 @@ footer {
 .dashboard-stat-item {
     text-align: center;
     padding: 1rem 1.5rem;
-    background: var(--light);
+    background: var(--white);
+    border: 1px solid var(--border);
     border-radius: 10px;
     min-width: 100px;
 }
