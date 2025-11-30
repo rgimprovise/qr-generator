@@ -73,11 +73,32 @@ echo -e "${YELLOW}📊 Найдены новые коммиты:${NC}"
 git log HEAD..origin/$CURRENT_BRANCH --oneline --decorate
 echo ""
 
-# Создание бэкапа базы данных
+# КРИТИЧЕСКАЯ ПРОВЕРКА: Создание бэкапа базы данных
 if [ -f "qr_codes.db" ]; then
-    BACKUP_FILE="qr_codes_backup_$(date +%Y%m%d_%H%M%S).db"
+    BACKUP_DIR="backups"
+    mkdir -p "$BACKUP_DIR"
+    BACKUP_FILE="$BACKUP_DIR/qr_codes_backup_$(date +%Y%m%d_%H%M%S).db"
     echo -e "${YELLOW}💾 Создание бэкапа базы данных: ${BACKUP_FILE}${NC}"
     cp qr_codes.db "$BACKUP_FILE"
+    
+    # Проверка размера бэкапа (должен быть > 0)
+    if [ ! -s "$BACKUP_FILE" ]; then
+        echo -e "${RED}❌ ОШИБКА: Бэкап базы данных пустой! Прерываем обновление.${NC}"
+        exit 1
+    fi
+    
+    # Подсчет QR кодов в базе (для проверки после обновления)
+    QR_COUNT=$(sqlite3 qr_codes.db "SELECT COUNT(*) FROM qr_codes;" 2>/dev/null || echo "0")
+    SCANS_COUNT=$(sqlite3 qr_codes.db "SELECT COUNT(*) FROM scans;" 2>/dev/null || echo "0")
+    echo -e "${BLUE}📊 Текущее состояние БД: ${QR_COUNT} QR кодов, ${SCANS_COUNT} сканирований${NC}"
+else
+    echo -e "${RED}⚠️  ВНИМАНИЕ: База данных qr_codes.db не найдена!${NC}"
+    read -p "Продолжить обновление? (y/n): " -n 1 -r
+    echo ""
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo "Обновление отменено"
+        exit 1
+    fi
 fi
 
 # Pull изменений
@@ -102,7 +123,68 @@ if ! pm2 restart qr-generator; then
 fi
 
 # Небольшая пауза для запуска
-sleep 2
+sleep 3
+
+# КРИТИЧЕСКАЯ ПРОВЕРКА: Проверка что база данных не потеряна
+if [ -f "qr_codes.db" ]; then
+    # Проверка что файл не пустой
+    if [ ! -s "qr_codes.db" ]; then
+        echo -e "${RED}❌ КРИТИЧЕСКАЯ ОШИБКА: База данных пустая!${NC}"
+        echo -e "${YELLOW}💾 Восстановление из бэкапа: ${BACKUP_FILE}${NC}"
+        if [ -f "$BACKUP_FILE" ]; then
+            cp "$BACKUP_FILE" qr_codes.db
+            echo -e "${GREEN}✅ База данных восстановлена из бэкапа${NC}"
+        else
+            echo -e "${RED}❌ Бэкап не найден! Немедленно проверьте систему!${NC}"
+            exit 1
+        fi
+    fi
+    
+    # Проверка целостности базы данных (если sqlite3 установлен)
+    if command -v sqlite3 &> /dev/null; then
+        echo -e "${YELLOW}🔍 Проверка целостности базы данных...${NC}"
+        INTEGRITY_CHECK=$(sqlite3 qr_codes.db "PRAGMA integrity_check;" 2>/dev/null | head -1)
+        
+        if [ "$INTEGRITY_CHECK" = "ok" ]; then
+            # Проверка что данные на месте
+            NEW_QR_COUNT=$(sqlite3 qr_codes.db "SELECT COUNT(*) FROM qr_codes;" 2>/dev/null || echo "0")
+            NEW_SCANS_COUNT=$(sqlite3 qr_codes.db "SELECT COUNT(*) FROM scans;" 2>/dev/null || echo "0")
+            
+            if [ -n "$QR_COUNT" ] && [ "$QR_COUNT" != "0" ] && [ "$NEW_QR_COUNT" -lt "$QR_COUNT" ]; then
+                echo -e "${RED}❌ КРИТИЧЕСКАЯ ОШИБКА: Количество QR кодов уменьшилось!${NC}"
+                echo -e "${RED}   Было: ${QR_COUNT}, Стало: ${NEW_QR_COUNT}${NC}"
+                echo -e "${YELLOW}💾 Бэкап сохранен в: ${BACKUP_FILE}${NC}"
+                echo -e "${YELLOW}   Для восстановления: cp ${BACKUP_FILE} qr_codes.db${NC}"
+                exit 1
+            fi
+            
+            echo -e "${GREEN}✅ База данных цела: ${NEW_QR_COUNT} QR кодов, ${NEW_SCANS_COUNT} сканирований${NC}"
+        else
+            if [ -n "$INTEGRITY_CHECK" ]; then
+                echo -e "${RED}❌ ОШИБКА ЦЕЛОСТНОСТИ БД: ${INTEGRITY_CHECK}${NC}"
+                echo -e "${YELLOW}💾 Бэкап сохранен в: ${BACKUP_FILE}${NC}"
+                echo -e "${YELLOW}   Для восстановления: cp ${BACKUP_FILE} qr_codes.db${NC}"
+                exit 1
+            fi
+        fi
+    else
+        # Если sqlite3 не установлен, просто проверяем что файл существует и не пустой
+        DB_SIZE=$(du -h qr_codes.db | cut -f1)
+        echo -e "${YELLOW}⚠️  sqlite3 не установлен, пропускаем проверку целостности${NC}"
+        echo -e "${BLUE}📊 Размер базы данных: ${DB_SIZE}${NC}"
+        echo -e "${GREEN}✅ База данных существует и не пустая${NC}"
+    fi
+else
+    echo -e "${RED}❌ КРИТИЧЕСКАЯ ОШИБКА: База данных qr_codes.db исчезла после обновления!${NC}"
+    echo -e "${YELLOW}💾 Восстановление из бэкапа: ${BACKUP_FILE}${NC}"
+    if [ -f "$BACKUP_FILE" ]; then
+        cp "$BACKUP_FILE" qr_codes.db
+        echo -e "${GREEN}✅ База данных восстановлена из бэкапа${NC}"
+    else
+        echo -e "${RED}❌ Бэкап не найден! Немедленно проверьте систему!${NC}"
+        exit 1
+    fi
+fi
 
 # Проверка статуса
 echo ""
@@ -134,5 +216,12 @@ fi
 echo -e "${BLUE}📝 Последний коммит:${NC}"
 git log -1 --pretty=format:"%h - %s (%an, %ar)" --abbrev-commit
 echo ""
+
+# Показать информацию о бэкапе
+if [ -f "$BACKUP_FILE" ]; then
+    BACKUP_SIZE=$(du -h "$BACKUP_FILE" | cut -f1)
+    echo -e "${BLUE}💾 Бэкап БД: ${BACKUP_FILE} (${BACKUP_SIZE})${NC}"
+fi
+
 echo ""
 
