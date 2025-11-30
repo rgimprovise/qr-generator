@@ -619,6 +619,11 @@ async function loadDashboard() {
         return;
     }
     
+    // Показываем загрузку только если список пустой
+    if (qrCodesCheckboxes.children.length === 0 || qrCodesCheckboxes.querySelector('.loading')) {
+        qrCodesCheckboxes.innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin"></i> Загрузка QR кодов...</div>';
+    }
+    
     try {
         // Создаем AbortController для таймаута
         const controller = new AbortController();

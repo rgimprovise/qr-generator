@@ -173,36 +173,25 @@
                     </button>
                 </div>
                 
-                <!-- Выбор QR кодов для отображения -->
-                <div class="dashboard-controls">
-                    <div class="form-group">
-                        <label>
-                            <i class="fas fa-qrcode"></i> Выберите QR коды для сравнения
-                        </label>
-                        <div id="qrCodesCheckboxes" class="qr-codes-checkboxes">
-                            <div class="loading">
-                                <i class="fas fa-spinner fa-spin"></i> Загрузка QR кодов...
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label for="periodSelect">
-                            <i class="fas fa-calendar-alt"></i> Период группировки
-                        </label>
-                        <select id="periodSelect" class="form-select" onchange="loadDashboardData()">
-                            <option value="days">По дням</option>
-                            <option value="hours">По часам (24ч)</option>
-                            <option value="weeks">По неделям</option>
-                        </select>
-                    </div>
-                </div>
-
                 <!-- График -->
                 <div id="dashboardContent" class="dashboard-content">
                     <div class="dashboard-placeholder">
                         <i class="fas fa-chart-area"></i>
                         <p>Выберите один или несколько QR кодов для отображения на диаграмме</p>
+                    </div>
+                </div>
+                
+                <!-- Выбор QR кодов для отображения (под графиком) -->
+                <div class="dashboard-qr-selector">
+                    <div class="qr-selector-header">
+                        <label>
+                            <i class="fas fa-qrcode"></i> Выберите QR коды для сравнения:
+                        </label>
+                    </div>
+                    <div id="qrCodesCheckboxes" class="qr-codes-checkboxes-compact">
+                        <div class="loading">
+                            <i class="fas fa-spinner fa-spin"></i> Загрузка QR кодов...
+                        </div>
                     </div>
                 </div>
             </div>
