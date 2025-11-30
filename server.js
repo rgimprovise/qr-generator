@@ -226,6 +226,69 @@ app.get('/api/qr/:shortCode/stats', (req, res) => {
   });
 });
 
+// API: Получить хронологические данные для дэшборда
+app.get('/api/qr/:shortCode/timeline', (req, res) => {
+  const { shortCode } = req.params;
+  const { period = 'days', limit = 30 } = req.query; // period: 'days', 'hours', 'weeks'
+
+  db.get('SELECT * FROM qr_codes WHERE short_code = ?', [shortCode], (err, qrCode) => {
+    if (err || !qrCode) {
+      return res.status(404).json({ error: 'QR код не найден' });
+    }
+
+    db.all('SELECT scan_time FROM scans WHERE qr_code_id = ? ORDER BY scan_time ASC', [qrCode.id], (err, scans) => {
+      if (err) {
+        return res.status(500).json({ error: 'Ошибка получения данных' });
+      }
+
+      const timeline = {};
+      const now = new Date();
+
+      scans.forEach(scan => {
+        if (!scan.scan_time) return;
+        
+        const date = new Date(scan.scan_time);
+        let key;
+
+        if (period === 'hours') {
+          // Группировка по часам (последние 24 часа)
+          key = date.toISOString().slice(0, 13) + ':00:00.000Z';
+        } else if (period === 'weeks') {
+          // Группировка по неделям
+          const weekStart = new Date(date);
+          weekStart.setDate(date.getDate() - date.getDay());
+          key = weekStart.toISOString().split('T')[0];
+        } else {
+          // Группировка по дням (по умолчанию)
+          key = date.toISOString().split('T')[0];
+        }
+
+        timeline[key] = (timeline[key] || 0) + 1;
+      });
+
+      // Преобразуем в массив и сортируем
+      const timelineArray = Object.entries(timeline)
+        .map(([date, count]) => ({ date, count }))
+        .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+      // Ограничиваем количество точек
+      const limitedTimeline = timelineArray.slice(-parseInt(limit));
+
+      res.json({
+        qrCode: {
+          id: qrCode.id,
+          short_code: qrCode.short_code,
+          title: qrCode.title,
+          total_scans: qrCode.total_scans
+        },
+        timeline: limitedTimeline,
+        period,
+        total_points: limitedTimeline.length
+      });
+    });
+  });
+});
+
 // API: Обновить QR код
 app.put('/api/qr/:shortCode', (req, res) => {
   const { shortCode } = req.params;

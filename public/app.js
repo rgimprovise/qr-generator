@@ -1,9 +1,12 @@
 // Глобальные переменные
 let currentQRCode = null;
+let dashboardChart = null; // Chart.js instance
+let dashboardChart = null; // Chart.js instance
 
 // Инициализация
 document.addEventListener('DOMContentLoaded', () => {
     loadQRList();
+    loadDashboard();
     
     // Обработчик формы создания QR кода
     document.getElementById('createForm').addEventListener('submit', async (e) => {
@@ -40,8 +43,9 @@ async function createQRCode() {
             // Очистка формы
             document.getElementById('createForm').reset();
             
-            // Обновление списка
+            // Обновление списка и дэшборда
             loadQRList();
+            loadDashboard();
             
             // Прокрутка к результату
             document.getElementById('result').scrollIntoView({ behavior: 'smooth' });
@@ -400,12 +404,16 @@ async function deleteQRCode(shortCode) {
         if (data.success) {
             alert('QR код успешно удален');
             loadQRList();
+            loadDashboard(); // Обновляем дэшборд
             
             // Скрыть результат, если он был отображен
             if (currentQRCode && currentQRCode.shortCode === shortCode) {
                 document.getElementById('result').style.display = 'none';
                 currentQRCode = null;
             }
+            
+            // Обновляем дэшборд (чекбоксы обновятся автоматически)
+            loadDashboard();
         } else {
             alert('Ошибка: ' + (data.error || 'Не удалось удалить QR код'));
         }
@@ -517,6 +525,7 @@ async function editQRCode(shortCode) {
           alert('✅ QR код успешно обновлен!');
           modal.remove();
           loadQRList();
+          loadDashboard(); // Обновляем дэшборд
         } else {
           alert('Ошибка: ' + (data.error || 'Не удалось обновить'));
           submitBtn.disabled = false;
@@ -553,4 +562,337 @@ document.addEventListener('keydown', (e) => {
         }
     }
 });
+
+// ==================== ДЭШБОРД АНАЛИТИКИ ====================
+
+// Загрузка дэшборда (заполнение списка QR кодов с чекбоксами)
+async function loadDashboard() {
+    const qrCodesCheckboxes = document.getElementById('qrCodesCheckboxes');
+    
+    try {
+        const response = await fetch('/api/qr/list');
+        const qrCodes = await response.json();
+
+        if (qrCodes.length === 0) {
+            qrCodesCheckboxes.innerHTML = `
+                <div class="empty-state">
+                    <i class="fas fa-inbox"></i>
+                    <p>Нет созданных QR кодов</p>
+                </div>
+            `;
+            return;
+        }
+
+        // Очищаем и заполняем чекбоксы
+        qrCodesCheckboxes.innerHTML = '';
+        
+        qrCodes.forEach(qr => {
+            const checkboxContainer = document.createElement('div');
+            checkboxContainer.className = 'qr-checkbox-item';
+            
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.id = `qr-${qr.short_code}`;
+            checkbox.value = qr.short_code;
+            checkbox.className = 'qr-checkbox';
+            checkbox.addEventListener('change', loadDashboardData);
+            
+            const label = document.createElement('label');
+            label.htmlFor = `qr-${qr.short_code}`;
+            label.innerHTML = `
+                <span class="qr-checkbox-title">${qr.title || 'Без названия'}</span>
+                <span class="qr-checkbox-meta">${qr.total_scans} переходов</span>
+            `;
+            
+            checkboxContainer.appendChild(checkbox);
+            checkboxContainer.appendChild(label);
+            qrCodesCheckboxes.appendChild(checkboxContainer);
+        });
+
+        // Если есть QR коды, выбираем первый по умолчанию
+        if (qrCodes.length > 0) {
+            const firstCheckbox = document.getElementById(`qr-${qrCodes[0].short_code}`);
+            if (firstCheckbox) {
+                firstCheckbox.checked = true;
+                loadDashboardData();
+            }
+        }
+    } catch (error) {
+        console.error('Ошибка загрузки QR кодов для дэшборда:', error);
+        qrCodesCheckboxes.innerHTML = `
+            <div class="empty-state">
+                <i class="fas fa-exclamation-triangle"></i>
+                <p>Ошибка загрузки QR кодов</p>
+            </div>
+        `;
+    }
+}
+
+// Загрузка данных для дэшборда (для нескольких QR кодов)
+async function loadDashboardData() {
+    const periodSelect = document.getElementById('periodSelect');
+    const dashboardContent = document.getElementById('dashboardContent');
+    const period = periodSelect.value;
+
+    // Получаем все выбранные QR коды
+    const selectedCheckboxes = document.querySelectorAll('.qr-checkbox:checked');
+    const selectedCodes = Array.from(selectedCheckboxes).map(cb => cb.value);
+
+    if (selectedCodes.length === 0) {
+        dashboardContent.innerHTML = `
+            <div class="dashboard-placeholder">
+                <i class="fas fa-chart-area"></i>
+                <p>Выберите один или несколько QR кодов для отображения на диаграмме</p>
+            </div>
+        `;
+        
+        // Уничтожаем график если есть
+        if (dashboardChart) {
+            dashboardChart.destroy();
+            dashboardChart = null;
+        }
+        return;
+    }
+
+    // Показываем загрузку
+    dashboardContent.innerHTML = `
+        <div class="loading">
+            <i class="fas fa-spinner fa-spin"></i> Загрузка данных для ${selectedCodes.length} QR кодов...
+        </div>
+    `;
+
+    try {
+        // Загружаем данные для всех выбранных QR кодов параллельно
+        const promises = selectedCodes.map(shortCode => 
+            fetch(`/api/qr/${shortCode}/timeline?period=${period}&limit=100`)
+                .then(res => res.json())
+        );
+
+        const allData = await Promise.all(promises);
+
+        // Проверяем на ошибки
+        const errors = allData.filter(data => data.error);
+        if (errors.length > 0) {
+            dashboardContent.innerHTML = `
+                <div class="empty-state">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <p>Ошибка загрузки данных для некоторых QR кодов</p>
+                </div>
+            `;
+            return;
+        }
+
+        // Отображаем дэшборд с графиками для всех выбранных QR кодов
+        displayDashboard(allData, period);
+    } catch (error) {
+        console.error('Ошибка загрузки данных дэшборда:', error);
+        dashboardContent.innerHTML = `
+            <div class="empty-state">
+                <i class="fas fa-exclamation-triangle"></i>
+                <p>Ошибка загрузки данных</p>
+            </div>
+        `;
+    }
+}
+
+// Отображение дэшборда с графиками для нескольких QR кодов
+function displayDashboard(allData, period) {
+    const dashboardContent = document.getElementById('dashboardContent');
+
+    // Проверяем что есть данные
+    const hasData = allData.some(data => data.timeline && data.timeline.length > 0);
+    
+    if (!hasData) {
+        dashboardContent.innerHTML = `
+            <div class="empty-state">
+                <i class="fas fa-chart-line"></i>
+                <p>Нет данных для отображения</p>
+                <p style="font-size: 0.875rem; margin-top: 0.5rem; opacity: 0.7;">
+                    Сканируйте QR коды, чтобы увидеть статистику
+                </p>
+            </div>
+        `;
+        return;
+    }
+
+    // Цвета для разных QR кодов
+    const colors = [
+        { border: 'rgb(99, 102, 241)', background: 'rgba(99, 102, 241, 0.1)' },
+        { border: 'rgb(16, 185, 129)', background: 'rgba(16, 185, 129, 0.1)' },
+        { border: 'rgb(245, 158, 11)', background: 'rgba(245, 158, 11, 0.1)' },
+        { border: 'rgb(239, 68, 68)', background: 'rgba(239, 68, 68, 0.1)' },
+        { border: 'rgb(139, 92, 246)', background: 'rgba(139, 92, 246, 0.1)' },
+        { border: 'rgb(59, 130, 246)', background: 'rgba(59, 130, 246, 0.1)' },
+        { border: 'rgb(236, 72, 153)', background: 'rgba(236, 72, 153, 0.1)' },
+        { border: 'rgb(14, 165, 233)', background: 'rgba(14, 165, 233, 0.1)' }
+    ];
+
+    // Собираем все уникальные даты из всех timeline
+    const allDates = new Set();
+    allData.forEach(data => {
+        if (data.timeline) {
+            data.timeline.forEach(item => allDates.add(item.date));
+        }
+    });
+    
+    const sortedDates = Array.from(allDates).sort((a, b) => new Date(a) - new Date(b));
+
+    // Форматируем даты для подписей
+    const labels = sortedDates.map(dateStr => {
+        const date = new Date(dateStr);
+        if (period === 'hours') {
+            return date.toLocaleString('ru-RU', { 
+                day: '2-digit', 
+                month: '2-digit', 
+                hour: '2-digit', 
+                minute: '2-digit' 
+            });
+        } else if (period === 'weeks') {
+            return date.toLocaleDateString('ru-RU', { 
+                day: '2-digit', 
+                month: '2-digit' 
+            });
+        } else {
+            return date.toLocaleDateString('ru-RU', { 
+                day: '2-digit', 
+                month: '2-digit',
+                year: 'numeric'
+            });
+        }
+    });
+
+    // Создаем datasets для каждого QR кода
+    const datasets = allData.map((data, index) => {
+        const qrCode = data.qrCode;
+        const timeline = data.timeline || [];
+        
+        // Создаем маппинг дата -> количество
+        const timelineMap = {};
+        timeline.forEach(item => {
+            timelineMap[item.date] = item.count;
+        });
+
+        // Создаем массив значений для всех дат
+        const counts = sortedDates.map(date => timelineMap[date] || 0);
+        const totalScans = counts.reduce((a, b) => a + b, 0);
+
+        const color = colors[index % colors.length];
+
+        return {
+            label: `${qrCode.title || 'Без названия'} (${qrCode.short_code})`,
+            data: counts,
+            borderColor: color.border,
+            backgroundColor: color.background,
+            borderWidth: 2,
+            fill: true,
+            tension: 0.4,
+            pointRadius: 3,
+            pointHoverRadius: 5,
+            pointBackgroundColor: color.border,
+            pointBorderColor: '#fff',
+            pointBorderWidth: 2,
+            totalScans: totalScans
+        };
+    });
+
+    // Подсчитываем общую статистику
+    const allCounts = datasets.flatMap(d => d.data);
+    const totalScans = allCounts.reduce((a, b) => a + b, 0);
+    const maxScans = Math.max(...allCounts, 0);
+    const avgScans = allCounts.length > 0 ? (totalScans / allCounts.length).toFixed(1) : 0;
+
+    // HTML для дэшборда
+    let html = `
+        <div class="dashboard-header">
+            <div class="dashboard-info">
+                <h3><i class="fas fa-chart-line"></i> Сравнение ${allData.length} QR кодов</h3>
+                <p class="dashboard-meta">
+                    <span><i class="fas fa-chart-bar"></i> Всего переходов: ${totalScans}</span>
+                </p>
+            </div>
+            <div class="dashboard-stats">
+                <div class="dashboard-stat-item">
+                    <div class="stat-value">${totalScans}</div>
+                    <div class="stat-label">Всего за период</div>
+                </div>
+                <div class="dashboard-stat-item">
+                    <div class="stat-value">${maxScans}</div>
+                    <div class="stat-label">Максимум</div>
+                </div>
+                <div class="dashboard-stat-item">
+                    <div class="stat-value">${avgScans}</div>
+                    <div class="stat-label">Среднее</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="chart-container">
+            <canvas id="timelineChart"></canvas>
+        </div>
+    `;
+
+    dashboardContent.innerHTML = html;
+
+    // Уничтожаем предыдущий график если есть
+    if (dashboardChart) {
+        dashboardChart.destroy();
+    }
+
+    // Создаем новый график
+    const ctx = document.getElementById('timelineChart').getContext('2d');
+    dashboardChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: datasets
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'top',
+                },
+                tooltip: {
+                    mode: 'index',
+                    intersect: false,
+                    callbacks: {
+                        label: function(context) {
+                            return `${context.dataset.label}: ${context.parsed.y} переходов`;
+                        }
+                    }
+                }
+            },
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    ticks: {
+                        stepSize: 1,
+                        precision: 0
+                    },
+                    title: {
+                        display: true,
+                        text: 'Количество переходов'
+                    }
+                },
+                x: {
+                    title: {
+                        display: true,
+                        text: period === 'hours' ? 'Время' : period === 'weeks' ? 'Неделя' : 'Дата'
+                    },
+                    ticks: {
+                        maxRotation: 45,
+                        minRotation: 45
+                    }
+                }
+            },
+            interaction: {
+                mode: 'nearest',
+                axis: 'x',
+                intersect: false
+            }
+        }
+    });
+}
 
