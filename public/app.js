@@ -1,6 +1,8 @@
 // Глобальные переменные
 let currentQRCode = null;
 let dashboardChart = null; // Chart.js instance
+let selectedQRCodes = new Set(); // Сохраняем выбранные QR коды
+let customDateRange = null; // Кастомный диапазон дат {from, to}
 
 // Инициализация
 document.addEventListener('DOMContentLoaded', () => {
@@ -739,9 +741,22 @@ async function loadDashboardData() {
     const dashboardContent = document.getElementById('dashboardContent');
     const period = periodSelect.value;
     
-    // Получаем выбранный временной период (Сегодня, Вчера, Неделя, Месяц)
+    // Получаем выбранный временной период (Сегодня, Вчера, Неделя, Месяц, custom)
     const activePeriodBtn = document.querySelector('.period-btn.active');
-    const dateRange = activePeriodBtn ? activePeriodBtn.dataset.period : 'today';
+    let dateRange = activePeriodBtn ? activePeriodBtn.dataset.period : 'today';
+    
+    // Если выбран кастомный период, используем сохраненные даты
+    if (dateRange === 'custom' && customDateRange) {
+        dateRange = 'custom';
+    } else if (dateRange === 'custom') {
+        // Если кастомный период выбран, но даты не заданы, переключаемся на сегодня
+        dateRange = 'today';
+        const todayBtn = document.querySelector('.period-btn[data-period="today"]');
+        if (todayBtn) {
+            document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
+            todayBtn.classList.add('active');
+        }
+    }
 
     // Получаем все выбранные QR коды
     const selectedCheckboxes = document.querySelectorAll('.qr-checkbox:checked');
@@ -776,7 +791,13 @@ async function loadDashboardData() {
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 15000);
             
-            return fetch(`/api/qr/${shortCode}/timeline?period=${period}&dateRange=${dateRange}&limit=100`, {
+            // Формируем URL с параметрами
+            let url = `/api/qr/${shortCode}/timeline?period=${period}&dateRange=${dateRange}&limit=100`;
+            if (dateRange === 'custom' && customDateRange) {
+                url += `&dateFrom=${customDateRange.from}&dateTo=${customDateRange.to}`;
+            }
+            
+            return fetch(url, {
                 signal: controller.signal
             })
                 .then(res => {
@@ -852,15 +873,45 @@ function displayDashboard(allData, period) {
         { border: 'rgb(14, 165, 233)', background: 'rgba(14, 165, 233, 0.1)' }
     ];
 
-    // Собираем все уникальные даты из всех timeline
+    // Собираем все уникальные даты из всех timeline и находим общий диапазон
     const allDates = new Set();
+    let minDate = null;
+    let maxDate = null;
+    
     allData.forEach(data => {
-        if (data.timeline) {
-            data.timeline.forEach(item => allDates.add(item.date));
+        if (data.timeline && data.timeline.length > 0) {
+            data.timeline.forEach(item => {
+                allDates.add(item.date);
+                const date = new Date(item.date);
+                if (!minDate || date < minDate) minDate = new Date(date);
+                if (!maxDate || date > maxDate) maxDate = new Date(date);
+            });
         }
     });
     
-    const sortedDates = Array.from(allDates).sort((a, b) => new Date(a) - new Date(b));
+    // Заполняем пропуски дат для непрерывного графика
+    const sortedDates = [];
+    if (minDate && maxDate) {
+        let currentDate = new Date(minDate);
+        while (currentDate <= maxDate) {
+            let key;
+            if (period === 'hours') {
+                key = currentDate.toISOString().slice(0, 13) + ':00:00.000Z';
+                currentDate.setHours(currentDate.getHours() + 1);
+            } else if (period === 'weeks') {
+                const weekStart = new Date(currentDate);
+                weekStart.setDate(currentDate.getDate() - currentDate.getDay());
+                key = weekStart.toISOString().split('T')[0];
+                currentDate.setDate(currentDate.getDate() + 7);
+            } else {
+                key = currentDate.toISOString().split('T')[0];
+                currentDate.setDate(currentDate.getDate() + 1);
+            }
+            sortedDates.push(key);
+        }
+    } else {
+        sortedDates.push(...Array.from(allDates).sort((a, b) => new Date(a) - new Date(b)));
+    }
 
     // Форматируем даты для подписей
     const labels = sortedDates.map(dateStr => {
@@ -891,14 +942,22 @@ function displayDashboard(allData, period) {
         const qrCode = data.qrCode;
         const timeline = data.timeline || [];
         
-        // Создаем маппинг дата -> количество
+        // Создаем маппинг дата -> количество с нормализацией ключей
         const timelineMap = {};
-        timeline.forEach(item => {
-            timelineMap[item.date] = item.count;
-        });
+        if (data.timeline) {
+            data.timeline.forEach(item => {
+                // Нормализуем ключ даты для правильного сопоставления
+                const normalizedKey = normalizeDateKey(item.date, period);
+                timelineMap[normalizedKey] = item.count;
+            });
+        }
 
         // Создаем массив значений для всех дат
-        const counts = sortedDates.map(date => timelineMap[date] || 0);
+        const counts = sortedDates.map(date => {
+            // Нормализуем дату для сравнения
+            const normalizedDate = normalizeDateKey(date, period);
+            return timelineMap[normalizedDate] || 0;
+        });
         const totalScans = counts.reduce((a, b) => a + b, 0);
 
         const color = colors[index % colors.length];
@@ -1158,7 +1217,9 @@ function showSection(sectionId) {
             }
         }
         // Загружаем данные дэшборда
+        loadDashboard();
         loadDashboardData();
+        loadUsersTable();
     }
 }
 
@@ -1170,9 +1231,15 @@ function refreshCurrentSection() {
         if (sectionId === 'list') {
             loadQRList();
         } else if (sectionId === 'dashboard') {
+            // Сохраняем выбранные QR коды перед обновлением
+            const checkboxes = document.querySelectorAll('.qr-checkbox:checked');
+            selectedQRCodes.clear();
+            checkboxes.forEach(cb => selectedQRCodes.add(cb.value));
+            
             loadDashboard();
             loadDashboardData();
             loadMetrics();
+            loadUsersTable(); // Загружаем таблицу пользователей
         }
     }
 }
@@ -1218,6 +1285,359 @@ function updateMetricCard(elementId, value) {
     const element = document.getElementById(elementId);
     if (element) {
         element.textContent = value.toLocaleString('ru-RU');
+    }
+}
+
+// ==================== КАСТОМНЫЙ ДИАПАЗОН ДАТ ====================
+
+// Показать модальное окно выбора кастомного диапазона дат
+function showCustomDateRange() {
+    const modal = document.getElementById('customDateRangeModal');
+    if (!modal) return;
+    
+    // Устанавливаем значения по умолчанию (последние 7 дней)
+    const dateTo = new Date();
+    const dateFrom = new Date();
+    dateFrom.setDate(dateFrom.getDate() - 6);
+    
+    document.getElementById('dateFrom').value = dateFrom.toISOString().split('T')[0];
+    document.getElementById('dateTo').value = dateTo.toISOString().split('T')[0];
+    
+    // Если есть сохраненный кастомный диапазон, используем его
+    if (customDateRange) {
+        document.getElementById('dateFrom').value = customDateRange.from;
+        document.getElementById('dateTo').value = customDateRange.to;
+    }
+    
+    modal.style.display = 'block';
+}
+
+// Закрыть модальное окно выбора дат
+function closeCustomDateRange() {
+    const modal = document.getElementById('customDateRangeModal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+}
+
+// Применить кастомный диапазон дат
+function applyCustomDateRange() {
+    const dateFrom = document.getElementById('dateFrom').value;
+    const dateTo = document.getElementById('dateTo').value;
+    
+    if (!dateFrom || !dateTo) {
+        alert('Пожалуйста, выберите обе даты');
+        return;
+    }
+    
+    if (new Date(dateFrom) > new Date(dateTo)) {
+        alert('Дата начала не может быть позже даты окончания');
+        return;
+    }
+    
+    // Сохраняем кастомный диапазон
+    customDateRange = {
+        from: dateFrom,
+        to: dateTo
+    };
+    
+    // Активируем кнопку кастомного периода
+    document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
+    const customBtn = document.getElementById('customPeriodBtn');
+    if (customBtn) {
+        customBtn.classList.add('active');
+    }
+    
+    // Закрываем модальное окно
+    closeCustomDateRange();
+    
+    // Перезагружаем данные
+    loadDashboardData();
+    // Обновляем фильтр дат в таблице пользователей если он установлен на custom
+    const usersDateFilter = document.getElementById('usersDateRangeFilter');
+    if (usersDateFilter && usersDateFilter.value === 'custom') {
+        loadUsersTable();
+    }
+}
+
+// Закрытие модального окна при клике вне его
+window.addEventListener('click', function(event) {
+    const modal = document.getElementById('customDateRangeModal');
+    if (event.target === modal) {
+        closeCustomDateRange();
+    }
+});
+
+// ==================== ТАБЛИЦА ПОЛЬЗОВАТЕЛЕЙ ====================
+
+let usersTableSortColumn = null;
+let usersTableSortDirection = 'desc';
+
+// Загрузка таблицы пользователей
+async function loadUsersTable() {
+    const container = document.getElementById('usersTableContainer');
+    if (!container) return;
+    
+    container.innerHTML = '<div class="loading"><i class="fas fa-spinner fa-spin"></i> Загрузка данных...</div>';
+    
+    try {
+        const qrCodeId = document.getElementById('usersQRFilter')?.value || 'all';
+        const dateRange = document.getElementById('usersDateRangeFilter')?.value || 'today';
+        const uniqueOnly = document.getElementById('uniqueUsersOnly')?.checked || false;
+        
+        // Получаем кастомный диапазон дат если выбран
+        let url = `/api/users?qrCodeId=${qrCodeId}&dateRange=${dateRange}&uniqueOnly=${uniqueOnly}`;
+        if (dateRange === 'custom') {
+            if (customDateRange) {
+                url += `&dateFrom=${customDateRange.from}&dateTo=${customDateRange.to}`;
+            } else {
+                // Если кастомный период выбран, но даты не заданы, показываем сообщение
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <i class="fas fa-calendar-alt"></i>
+                        <p>Выберите диапазон дат</p>
+                        <button class="btn btn-primary" onclick="showCustomDateRange()">Выбрать период</button>
+                    </div>
+                `;
+                return;
+            }
+        }
+        
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 15000);
+        
+        const response = await fetch(url, {
+            signal: controller.signal
+        });
+        
+        clearTimeout(timeoutId);
+        
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        displayUsersTable(data.users || []);
+        
+        // Обновляем список QR кодов в фильтре
+        updateUsersQRFilter();
+        
+    } catch (error) {
+        if (error.name === 'AbortError') {
+            container.innerHTML = `
+                <div class="error-state">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <p>Превышено время ожидания</p>
+                    <button class="btn btn-primary" onclick="loadUsersTable()">Попробовать снова</button>
+                </div>
+            `;
+        } else {
+            console.error('Ошибка загрузки пользователей:', error);
+            container.innerHTML = `
+                <div class="error-state">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <p>Ошибка загрузки данных</p>
+                    <button class="btn btn-primary" onclick="loadUsersTable()">Попробовать снова</button>
+                </div>
+            `;
+        }
+    }
+}
+
+// Обновление списка QR кодов в фильтре таблицы пользователей
+async function updateUsersQRFilter() {
+    const filter = document.getElementById('usersQRFilter');
+    if (!filter) return;
+    
+    try {
+        const response = await fetch('/api/qr/list');
+        if (!response.ok) return;
+        
+        const qrCodes = await response.json();
+        const currentValue = filter.value;
+        
+        filter.innerHTML = '<option value="all">Все QR коды</option>';
+        qrCodes.forEach(qr => {
+            const option = document.createElement('option');
+            option.value = qr.id;
+            option.textContent = `${qr.title || 'Без названия'} (${qr.short_code})`;
+            if (qr.id.toString() === currentValue) {
+                option.selected = true;
+            }
+            filter.appendChild(option);
+        });
+    } catch (error) {
+        console.error('Ошибка обновления фильтра QR кодов:', error);
+    }
+}
+
+// Отображение таблицы пользователей
+function displayUsersTable(users) {
+    const container = document.getElementById('usersTableContainer');
+    if (!container) return;
+    
+    if (users.length === 0) {
+        container.innerHTML = `
+            <div class="empty-state">
+                <i class="fas fa-users"></i>
+                <p>Нет данных для отображения</p>
+            </div>
+        `;
+        return;
+    }
+    
+    let html = `
+        <div class="table-responsive">
+            <table class="users-table">
+                <thead>
+                    <tr>
+                        <th onclick="sortUsersTable('scan_time')" class="sortable">
+                            Дата/Время <i class="fas fa-sort"></i>
+                        </th>
+                        <th onclick="sortUsersTable('qr_title')" class="sortable">
+                            QR код <i class="fas fa-sort"></i>
+                        </th>
+                        <th onclick="sortUsersTable('device_type')" class="sortable">
+                            Устройство <i class="fas fa-sort"></i>
+                        </th>
+                        <th onclick="sortUsersTable('browser')" class="sortable">
+                            Браузер <i class="fas fa-sort"></i>
+                        </th>
+                        <th onclick="sortUsersTable('os')" class="sortable">
+                            ОС <i class="fas fa-sort"></i>
+                        </th>
+                        <th onclick="sortUsersTable('country')" class="sortable">
+                            Страна <i class="fas fa-sort"></i>
+                        </th>
+                        <th onclick="sortUsersTable('city')" class="sortable">
+                            Город <i class="fas fa-sort"></i>
+                        </th>
+                        <th>IP адрес</th>
+                    </tr>
+                </thead>
+                <tbody>
+    `;
+    
+    users.forEach(user => {
+        const scanTime = new Date(user.scan_time);
+        const formattedTime = scanTime.toLocaleString('ru-RU', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+        
+        html += `
+            <tr>
+                <td>${formattedTime}</td>
+                <td>
+                    <strong>${user.qr_title || 'Без названия'}</strong><br>
+                    <small style="color: #666;">${user.short_code}</small>
+                </td>
+                <td>
+                    <i class="fas fa-${getDeviceIcon(user.device_type)}"></i>
+                    ${user.device_type || 'Неизвестно'}
+                </td>
+                <td>${user.browser || 'Неизвестно'} ${user.browser_version || ''}</td>
+                <td>${user.os || 'Неизвестно'} ${user.os_version || ''}</td>
+                <td>
+                    ${user.country ? `<i class="fas fa-globe"></i> ${user.country}` : 'Неизвестно'}
+                </td>
+                <td>${user.city || '-'}</td>
+                <td><code>${user.ip_address || '-'}</code></td>
+            </tr>
+        `;
+    });
+    
+    html += `
+                </tbody>
+            </table>
+        </div>
+        <div class="table-footer">
+            <p>Всего записей: <strong>${users.length}</strong></p>
+        </div>
+    `;
+    
+    container.innerHTML = html;
+}
+
+// Получить иконку для типа устройства
+function getDeviceIcon(deviceType) {
+    if (!deviceType) return 'desktop';
+    const type = deviceType.toLowerCase();
+    if (type.includes('mobile')) return 'mobile-alt';
+    if (type.includes('tablet')) return 'tablet-alt';
+    return 'desktop';
+}
+
+// Сортировка таблицы пользователей
+function sortUsersTable(column) {
+    if (usersTableSortColumn === column) {
+        usersTableSortDirection = usersTableSortDirection === 'asc' ? 'desc' : 'asc';
+    } else {
+        usersTableSortColumn = column;
+        usersTableSortDirection = 'asc';
+    }
+    
+    // Перезагружаем таблицу с сортировкой на клиенте
+    const container = document.getElementById('usersTableContainer');
+    const table = container?.querySelector('.users-table tbody');
+    if (!table) return;
+    
+    const rows = Array.from(table.querySelectorAll('tr'));
+    rows.sort((a, b) => {
+        const aText = a.querySelector(`td:nth-child(${getColumnIndex(column)})`)?.textContent.trim() || '';
+        const bText = b.querySelector(`td:nth-child(${getColumnIndex(column)})`)?.textContent.trim() || '';
+        
+        // Для даты используем числовое сравнение
+        if (column === 'scan_time') {
+            const aDate = new Date(aText);
+            const bDate = new Date(bText);
+            return usersTableSortDirection === 'asc' ? aDate - bDate : bDate - aDate;
+        }
+        
+        // Для остальных - текстовое сравнение
+        if (usersTableSortDirection === 'asc') {
+            return aText.localeCompare(bText, 'ru');
+        } else {
+            return bText.localeCompare(aText, 'ru');
+        }
+    });
+    
+    // Обновляем таблицу
+    rows.forEach(row => table.appendChild(row));
+    
+    // Обновляем иконки сортировки
+    document.querySelectorAll('.users-table th.sortable i').forEach(icon => {
+        icon.className = 'fas fa-sort';
+    });
+    const header = document.querySelector(`.users-table th[onclick*="${column}"]`);
+    if (header) {
+        const icon = header.querySelector('i');
+        if (icon) {
+            icon.className = usersTableSortDirection === 'asc' ? 'fas fa-sort-up' : 'fas fa-sort-down';
+        }
+    }
+}
+
+// Получить индекс колонки по названию
+function getColumnIndex(column) {
+    const columns = ['scan_time', 'qr_title', 'device_type', 'browser', 'os', 'country', 'city', 'ip_address'];
+    return columns.indexOf(column) + 1;
+}
+
+// Нормализация ключа даты для сравнения
+function normalizeDateKey(dateStr, period) {
+    const date = new Date(dateStr);
+    if (period === 'hours') {
+        return date.toISOString().slice(0, 13) + ':00:00.000Z';
+    } else if (period === 'weeks') {
+        const weekStart = new Date(date);
+        weekStart.setDate(date.getDate() - date.getDay());
+        return weekStart.toISOString().split('T')[0];
+    } else {
+        return date.toISOString().split('T')[0];
     }
 }
 

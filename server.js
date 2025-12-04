@@ -252,18 +252,33 @@ app.get('/api/qr/:shortCode/timeline', (req, res) => {
         dateTo = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate(), 23, 59, 59);
         break;
       case 'week':
+        // Последние 7 дней включая сегодня
         dateFrom = new Date(now);
-        dateFrom.setDate(dateFrom.getDate() - 7);
+        dateFrom.setDate(dateFrom.getDate() - 6); // -6 чтобы включить сегодня (итого 7 дней)
         dateFrom.setHours(0, 0, 0, 0);
         dateTo = new Date(now);
         dateTo.setHours(23, 59, 59, 999);
         break;
       case 'month':
+        // Последние 30 дней включая сегодня
         dateFrom = new Date(now);
-        dateFrom.setDate(dateFrom.getDate() - 30);
+        dateFrom.setDate(dateFrom.getDate() - 29); // -29 чтобы включить сегодня (итого 30 дней)
         dateFrom.setHours(0, 0, 0, 0);
         dateTo = new Date(now);
         dateTo.setHours(23, 59, 59, 999);
+        break;
+      case 'custom':
+        // Кастомный диапазон обрабатывается выше
+        if (req.query.dateFrom && req.query.dateTo) {
+          dateFrom = new Date(req.query.dateFrom);
+          dateFrom.setHours(0, 0, 0, 0);
+          dateTo = new Date(req.query.dateTo);
+          dateTo.setHours(23, 59, 59, 999);
+        } else {
+          // Если кастомный период выбран, но даты не переданы, используем сегодня
+          dateFrom = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+          dateTo = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+        }
         break;
       default:
         // По умолчанию - сегодня
@@ -312,8 +327,41 @@ app.get('/api/qr/:shortCode/timeline', (req, res) => {
           .map(([date, count]) => ({ date, count }))
           .sort((a, b) => new Date(a.date) - new Date(b.date));
 
+        // Заполняем пропуски дат нулями для непрерывного графика
+        const filledTimeline = [];
+        if (timelineArray.length > 0) {
+          const firstDate = new Date(timelineArray[0].date);
+          const lastDate = new Date(timelineArray[timelineArray.length - 1].date);
+          const timelineMap = {};
+          timelineArray.forEach(item => {
+            timelineMap[item.date] = item.count;
+          });
+
+          let currentDate = new Date(firstDate);
+          while (currentDate <= lastDate) {
+            let key;
+            if (period === 'hours') {
+              key = currentDate.toISOString().slice(0, 13) + ':00:00.000Z';
+              currentDate.setHours(currentDate.getHours() + 1);
+            } else if (period === 'weeks') {
+              const weekStart = new Date(currentDate);
+              weekStart.setDate(currentDate.getDate() - currentDate.getDay());
+              key = weekStart.toISOString().split('T')[0];
+              currentDate.setDate(currentDate.getDate() + 7);
+            } else {
+              key = currentDate.toISOString().split('T')[0];
+              currentDate.setDate(currentDate.getDate() + 1);
+            }
+
+            filledTimeline.push({
+              date: key,
+              count: timelineMap[key] || 0
+            });
+          }
+        }
+
         // Ограничиваем количество точек только если нужно
-        const limitedTimeline = timelineArray.slice(-parseInt(limit));
+        const limitedTimeline = filledTimeline.slice(-parseInt(limit));
 
         res.json({
           qrCode: {
@@ -399,6 +447,109 @@ app.delete('/api/qr/:shortCode', (req, res) => {
         }
         res.json({ success: true, message: 'QR код удален' });
       });
+    });
+  });
+});
+
+// API: Получить список пользователей (сканирований) с фильтрацией
+app.get('/api/users', (req, res) => {
+  const { qrCodeId, dateRange = 'today', dateFrom, dateTo, uniqueOnly = 'false' } = req.query;
+
+  // Вычисляем диапазон дат
+  const now = new Date();
+  let dateFromCalc, dateToCalc;
+  
+  if (dateRange === 'custom' && dateFrom && dateTo) {
+    dateFromCalc = new Date(dateFrom);
+    dateFromCalc.setHours(0, 0, 0, 0);
+    dateToCalc = new Date(dateTo);
+    dateToCalc.setHours(23, 59, 59, 999);
+  } else {
+    switch (dateRange) {
+      case 'today':
+        dateFromCalc = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+        dateToCalc = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+        break;
+      case 'yesterday':
+        const yesterday = new Date(now);
+        yesterday.setDate(yesterday.getDate() - 1);
+        dateFromCalc = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate(), 0, 0, 0);
+        dateToCalc = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate(), 23, 59, 59);
+        break;
+      case 'week':
+        dateFromCalc = new Date(now);
+        dateFromCalc.setDate(dateFromCalc.getDate() - 6);
+        dateFromCalc.setHours(0, 0, 0, 0);
+        dateToCalc = new Date(now);
+        dateToCalc.setHours(23, 59, 59, 999);
+        break;
+      case 'month':
+        dateFromCalc = new Date(now);
+        dateFromCalc.setDate(dateFromCalc.getDate() - 29);
+        dateFromCalc.setHours(0, 0, 0, 0);
+        dateToCalc = new Date(now);
+        dateToCalc.setHours(23, 59, 59, 999);
+        break;
+      default:
+        dateFromCalc = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+        dateToCalc = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+    }
+  }
+
+  const dateFromStr = dateFromCalc.toISOString();
+  const dateToStr = dateToCalc.toISOString();
+
+  // Формируем SQL запрос
+  let query = `
+    SELECT 
+      s.*,
+      q.short_code,
+      q.title as qr_title,
+      q.original_url
+    FROM scans s
+    JOIN qr_codes q ON s.qr_code_id = q.id
+    WHERE s.scan_time >= ? AND s.scan_time <= ?
+  `;
+  const params = [dateFromStr, dateToStr];
+
+  if (qrCodeId && qrCodeId !== 'all') {
+    query += ' AND s.qr_code_id = ?';
+    params.push(qrCodeId);
+  }
+
+  query += ' ORDER BY s.scan_time DESC';
+
+  db.all(query, params, (err, scans) => {
+    if (err) {
+      return res.status(500).json({ error: 'Ошибка получения данных' });
+    }
+
+    // Если нужны только уникальные пользователи, группируем по отпечатку
+    if (uniqueOnly === 'true') {
+      const uniqueMap = new Map();
+      scans.forEach(scan => {
+        // Создаем отпечаток: IP + User Agent (можно улучшить)
+        const fingerprint = `${scan.ip_address || ''}_${scan.user_agent || ''}`;
+        if (!uniqueMap.has(fingerprint)) {
+          uniqueMap.set(fingerprint, scan);
+        } else {
+          // Если уже есть, берем самое раннее сканирование
+          const existing = uniqueMap.get(fingerprint);
+          if (new Date(scan.scan_time) < new Date(existing.scan_time)) {
+            uniqueMap.set(fingerprint, scan);
+          }
+        }
+      });
+      scans = Array.from(uniqueMap.values());
+    }
+
+    res.json({
+      users: scans,
+      total: scans.length,
+      dateRange: {
+        from: dateFromStr,
+        to: dateToStr
+      }
     });
   });
 });

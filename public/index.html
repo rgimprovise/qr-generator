@@ -47,11 +47,44 @@
                     <button class="period-btn" data-period="yesterday">Вчера</button>
                     <button class="period-btn" data-period="week">Неделя</button>
                     <button class="period-btn" data-period="month">Месяц</button>
+                    <button class="period-btn" data-period="custom" id="customPeriodBtn" onclick="showCustomDateRange()">
+                        <i class="fas fa-calendar-alt"></i> Выбрать период
+                    </button>
                     <select id="periodSelect" class="period-dropdown" onchange="handlePeriodGroupChange()">
                         <option value="days">По дням</option>
                         <option value="hours">По часам</option>
                         <option value="weeks">По неделям</option>
                     </select>
+                </div>
+                
+                <!-- Модальное окно выбора произвольного диапазона дат -->
+                <div id="customDateRangeModal" class="modal" style="display: none;">
+                    <div class="modal-content" style="max-width: 500px;">
+                        <div class="modal-header">
+                            <h2><i class="fas fa-calendar-alt"></i> Выбор периода</h2>
+                            <button class="close-btn" onclick="closeCustomDateRange()">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="form-group">
+                                <label for="dateFrom">
+                                    <i class="fas fa-calendar"></i> Дата начала
+                                </label>
+                                <input type="date" id="dateFrom" class="form-input">
+                            </div>
+                            <div class="form-group">
+                                <label for="dateTo">
+                                    <i class="fas fa-calendar"></i> Дата окончания
+                                </label>
+                                <input type="date" id="dateTo" class="form-input">
+                            </div>
+                            <div class="action-buttons">
+                                <button class="btn btn-secondary" onclick="closeCustomDateRange()">Отмена</button>
+                                <button class="btn btn-primary" onclick="applyCustomDateRange()">Применить</button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
                 <button class="btn-icon" onclick="refreshCurrentSection()" title="Обновить">
                     <i class="fas fa-sync-alt"></i>
@@ -191,6 +224,39 @@
                     <div id="qrCodesCheckboxes" class="qr-codes-checkboxes-compact">
                         <div class="loading">
                             <i class="fas fa-spinner fa-spin"></i> Загрузка QR кодов...
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Таблица пользователей -->
+                <div class="card" id="usersTableSection" style="margin-top: 2rem;">
+                    <div class="users-table-header">
+                        <h3>
+                            <i class="fas fa-users"></i> Пользователи, считывающие QR коды
+                        </h3>
+                        <div class="users-table-controls">
+                            <select id="usersQRFilter" class="form-input" style="width: auto; margin-right: 1rem;" onchange="loadUsersTable()">
+                                <option value="all">Все QR коды</option>
+                            </select>
+                            <select id="usersDateRangeFilter" class="form-input" style="width: auto; margin-right: 1rem;" onchange="loadUsersTable()">
+                                <option value="today">Сегодня</option>
+                                <option value="yesterday">Вчера</option>
+                                <option value="week">Неделя</option>
+                                <option value="month">Месяц</option>
+                                <option value="custom">Произвольный период</option>
+                            </select>
+                            <label style="display: flex; align-items: center; margin-right: 1rem;">
+                                <input type="checkbox" id="uniqueUsersOnly" onchange="loadUsersTable()" style="margin-right: 0.5rem;">
+                                Только уникальные
+                            </label>
+                            <button class="btn btn-secondary" onclick="loadUsersTable()" title="Обновить">
+                                <i class="fas fa-sync-alt"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div id="usersTableContainer">
+                        <div class="loading">
+                            <i class="fas fa-spinner fa-spin"></i> Загрузка данных...
                         </div>
                     </div>
                 </div>
