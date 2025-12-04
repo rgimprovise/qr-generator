@@ -668,7 +668,20 @@ async function loadDashboard() {
             checkbox.id = `qr-${qr.short_code}`;
             checkbox.value = qr.short_code;
             checkbox.className = 'qr-checkbox';
-            checkbox.addEventListener('change', loadDashboardData);
+            
+            // Восстанавливаем выбранные QR коды
+            if (selectedQRCodes.has(qr.short_code)) {
+                checkbox.checked = true;
+            }
+            
+            checkbox.addEventListener('change', function() {
+                if (this.checked) {
+                    selectedQRCodes.add(qr.short_code);
+                } else {
+                    selectedQRCodes.delete(qr.short_code);
+                }
+                loadDashboardData();
+            });
             
             const label = document.createElement('label');
             label.htmlFor = `qr-${qr.short_code}`;
@@ -682,13 +695,18 @@ async function loadDashboard() {
             qrCodesCheckboxes.appendChild(checkboxContainer);
         });
 
-        // Если есть QR коды, выбираем первый по умолчанию
-        if (qrCodes.length > 0) {
-            const firstCheckbox = document.getElementById(`qr-${qrCodes[0].short_code}`);
+        // Если нет выбранных QR кодов и есть доступные, выбираем первый по умолчанию
+        if (qrCodes.length > 0 && selectedQRCodes.size === 0) {
+            const firstCode = qrCodes[0].short_code;
+            selectedQRCodes.add(firstCode);
+            const firstCheckbox = document.getElementById(`qr-${firstCode}`);
             if (firstCheckbox) {
                 firstCheckbox.checked = true;
                 loadDashboardData();
             }
+        } else if (selectedQRCodes.size > 0) {
+            // Если есть сохраненные выбранные коды, загружаем данные
+            loadDashboardData();
         }
     } catch (error) {
         console.error('Ошибка загрузки QR кодов для дэшборда:', error);
@@ -873,23 +891,29 @@ function displayDashboard(allData, period) {
         { border: 'rgb(14, 165, 233)', background: 'rgba(14, 165, 233, 0.1)' }
     ];
 
-    // Собираем все уникальные даты из всех timeline и находим общий диапазон
-    const allDates = new Set();
+    // ВАЖНО: Используем dateFrom и dateTo из ответа API для создания полного диапазона
+    // Это гарантирует что график покажет весь выбранный период, а не только даты со сканированиями
     let minDate = null;
     let maxDate = null;
     
-    allData.forEach(data => {
-        if (data.timeline && data.timeline.length > 0) {
-            data.timeline.forEach(item => {
-                allDates.add(item.date);
-                const date = new Date(item.date);
-                if (!minDate || date < minDate) minDate = new Date(date);
-                if (!maxDate || date > maxDate) maxDate = new Date(date);
-            });
-        }
-    });
+    // Получаем диапазон дат из первого ответа API (все QR коды используют один период)
+    if (allData.length > 0 && allData[0].dateFrom && allData[0].dateTo) {
+        minDate = new Date(allData[0].dateFrom);
+        maxDate = new Date(allData[0].dateTo);
+    } else {
+        // Fallback: используем даты из timeline если dateFrom/dateTo не переданы
+        allData.forEach(data => {
+            if (data.timeline && data.timeline.length > 0) {
+                data.timeline.forEach(item => {
+                    const date = new Date(item.date);
+                    if (!minDate || date < minDate) minDate = new Date(date);
+                    if (!maxDate || date > maxDate) maxDate = new Date(date);
+                });
+            }
+        });
+    }
     
-    // Заполняем пропуски дат для непрерывного графика
+    // Заполняем пропуски дат для непрерывного графика на основе полного периода
     const sortedDates = [];
     if (minDate && maxDate) {
         let currentDate = new Date(minDate);
@@ -901,6 +925,7 @@ function displayDashboard(allData, period) {
             } else if (period === 'weeks') {
                 const weekStart = new Date(currentDate);
                 weekStart.setDate(currentDate.getDate() - currentDate.getDay());
+                weekStart.setHours(0, 0, 0, 0);
                 key = weekStart.toISOString().split('T')[0];
                 currentDate.setDate(currentDate.getDate() + 7);
             } else {
@@ -909,8 +934,6 @@ function displayDashboard(allData, period) {
             }
             sortedDates.push(key);
         }
-    } else {
-        sortedDates.push(...Array.from(allDates).sort((a, b) => new Date(a) - new Date(b)));
     }
 
     // Форматируем даты для подписей
@@ -1497,6 +1520,9 @@ function displayUsersTable(users) {
                         <th onclick="sortUsersTable('qr_title')" class="sortable">
                             QR код <i class="fas fa-sort"></i>
                         </th>
+                        <th onclick="sortUsersTable('scan_count')" class="sortable">
+                            Сканирований <i class="fas fa-sort"></i>
+                        </th>
                         <th onclick="sortUsersTable('device_type')" class="sortable">
                             Устройство <i class="fas fa-sort"></i>
                         </th>
@@ -1534,6 +1560,9 @@ function displayUsersTable(users) {
                 <td>
                     <strong>${user.qr_title || 'Без названия'}</strong><br>
                     <small style="color: #666;">${user.short_code}</small>
+                </td>
+                <td>
+                    <strong style="color: var(--primary-color);">${user.scan_count || 1}</strong>
                 </td>
                 <td>
                     <i class="fas fa-${getDeviceIcon(user.device_type)}"></i>
@@ -1597,6 +1626,13 @@ function sortUsersTable(column) {
             return usersTableSortDirection === 'asc' ? aDate - bDate : bDate - aDate;
         }
         
+        // Для количества сканирований используем числовое сравнение
+        if (column === 'scan_count') {
+            const aNum = parseInt(aText) || 0;
+            const bNum = parseInt(bText) || 0;
+            return usersTableSortDirection === 'asc' ? aNum - bNum : bNum - aNum;
+        }
+        
         // Для остальных - текстовое сравнение
         if (usersTableSortDirection === 'asc') {
             return aText.localeCompare(bText, 'ru');
@@ -1623,7 +1659,7 @@ function sortUsersTable(column) {
 
 // Получить индекс колонки по названию
 function getColumnIndex(column) {
-    const columns = ['scan_time', 'qr_title', 'device_type', 'browser', 'os', 'country', 'city', 'ip_address'];
+    const columns = ['scan_time', 'qr_title', 'scan_count', 'device_type', 'browser', 'os', 'country', 'city', 'ip_address'];
     return columns.indexOf(column) + 1;
 }
 

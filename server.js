@@ -328,31 +328,36 @@ app.get('/api/qr/:shortCode/timeline', (req, res) => {
           .sort((a, b) => new Date(a.date) - new Date(b.date));
 
         // Заполняем пропуски дат нулями для непрерывного графика
+        // ВАЖНО: Используем dateFrom и dateTo для создания полного диапазона
         const filledTimeline = [];
-        if (timelineArray.length > 0) {
-          const firstDate = new Date(timelineArray[0].date);
-          const lastDate = new Date(timelineArray[timelineArray.length - 1].date);
-          const timelineMap = {};
-          timelineArray.forEach(item => {
-            timelineMap[item.date] = item.count;
-          });
+        const timelineMap = {};
+        timelineArray.forEach(item => {
+          timelineMap[item.date] = item.count;
+        });
 
-          let currentDate = new Date(firstDate);
-          while (currentDate <= lastDate) {
-            let key;
-            if (period === 'hours') {
-              key = currentDate.toISOString().slice(0, 13) + ':00:00.000Z';
-              currentDate.setHours(currentDate.getHours() + 1);
-            } else if (period === 'weeks') {
-              const weekStart = new Date(currentDate);
-              weekStart.setDate(currentDate.getDate() - currentDate.getDay());
-              key = weekStart.toISOString().split('T')[0];
-              currentDate.setDate(currentDate.getDate() + 7);
-            } else {
-              key = currentDate.toISOString().split('T')[0];
-              currentDate.setDate(currentDate.getDate() + 1);
-            }
+        // Используем полный выбранный период, а не только даты со сканированиями
+        let currentDate = new Date(dateFrom);
+        const endDate = new Date(dateTo);
 
+        while (currentDate <= endDate) {
+          let key;
+          if (period === 'hours') {
+            key = currentDate.toISOString().slice(0, 13) + ':00:00.000Z';
+            currentDate.setHours(currentDate.getHours() + 1);
+          } else if (period === 'weeks') {
+            const weekStart = new Date(currentDate);
+            weekStart.setDate(currentDate.getDate() - currentDate.getDay());
+            weekStart.setHours(0, 0, 0, 0);
+            key = weekStart.toISOString().split('T')[0];
+            currentDate.setDate(currentDate.getDate() + 7);
+          } else {
+            key = currentDate.toISOString().split('T')[0];
+            currentDate.setDate(currentDate.getDate() + 1);
+          }
+
+          // Проверяем что не вышли за границы периода
+          const keyDate = new Date(key);
+          if (keyDate >= dateFrom && keyDate <= endDate) {
             filledTimeline.push({
               date: key,
               count: timelineMap[key] || 0
@@ -373,6 +378,8 @@ app.get('/api/qr/:shortCode/timeline', (req, res) => {
           timeline: limitedTimeline,
           period,
           dateRange,
+          dateFrom: dateFromStr,
+          dateTo: dateToStr,
           total_points: limitedTimeline.length
         });
       }
@@ -459,40 +466,43 @@ app.get('/api/users', (req, res) => {
   const now = new Date();
   let dateFromCalc, dateToCalc;
   
+  // Функция для создания даты в локальном времени
+  const createLocalDate = (year, month, day, hour = 0, minute = 0, second = 0) => {
+    return new Date(year, month, day, hour, minute, second);
+  };
+  
   if (dateRange === 'custom' && dateFrom && dateTo) {
-    dateFromCalc = new Date(dateFrom);
-    dateFromCalc.setHours(0, 0, 0, 0);
-    dateToCalc = new Date(dateTo);
-    dateToCalc.setHours(23, 59, 59, 999);
+    const fromParts = dateFrom.split('-');
+    const toParts = dateTo.split('-');
+    dateFromCalc = createLocalDate(parseInt(fromParts[0]), parseInt(fromParts[1]) - 1, parseInt(fromParts[2]), 0, 0, 0);
+    dateToCalc = createLocalDate(parseInt(toParts[0]), parseInt(toParts[1]) - 1, parseInt(toParts[2]), 23, 59, 59);
   } else {
     switch (dateRange) {
       case 'today':
-        dateFromCalc = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
-        dateToCalc = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+        dateFromCalc = createLocalDate(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+        dateToCalc = createLocalDate(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
         break;
       case 'yesterday':
         const yesterday = new Date(now);
         yesterday.setDate(yesterday.getDate() - 1);
-        dateFromCalc = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate(), 0, 0, 0);
-        dateToCalc = new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate(), 23, 59, 59);
+        dateFromCalc = createLocalDate(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate(), 0, 0, 0);
+        dateToCalc = createLocalDate(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate(), 23, 59, 59);
         break;
       case 'week':
         dateFromCalc = new Date(now);
         dateFromCalc.setDate(dateFromCalc.getDate() - 6);
-        dateFromCalc.setHours(0, 0, 0, 0);
-        dateToCalc = new Date(now);
-        dateToCalc.setHours(23, 59, 59, 999);
+        dateFromCalc = createLocalDate(dateFromCalc.getFullYear(), dateFromCalc.getMonth(), dateFromCalc.getDate(), 0, 0, 0);
+        dateToCalc = createLocalDate(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
         break;
       case 'month':
         dateFromCalc = new Date(now);
         dateFromCalc.setDate(dateFromCalc.getDate() - 29);
-        dateFromCalc.setHours(0, 0, 0, 0);
-        dateToCalc = new Date(now);
-        dateToCalc.setHours(23, 59, 59, 999);
+        dateFromCalc = createLocalDate(dateFromCalc.getFullYear(), dateFromCalc.getMonth(), dateFromCalc.getDate(), 0, 0, 0);
+        dateToCalc = createLocalDate(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
         break;
       default:
-        dateFromCalc = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
-        dateToCalc = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+        dateFromCalc = createLocalDate(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+        dateToCalc = createLocalDate(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
     }
   }
 
@@ -527,10 +537,17 @@ app.get('/api/users', (req, res) => {
     // Если нужны только уникальные пользователи, группируем по отпечатку
     if (uniqueOnly === 'true') {
       const uniqueMap = new Map();
+      const scanCounts = new Map(); // Счетчик сканирований для каждого уникального пользователя
+      
       scans.forEach(scan => {
         // Создаем отпечаток: IP + User Agent (можно улучшить)
         const fingerprint = `${scan.ip_address || ''}_${scan.user_agent || ''}`;
+        
+        // Увеличиваем счетчик сканирований
+        scanCounts.set(fingerprint, (scanCounts.get(fingerprint) || 0) + 1);
+        
         if (!uniqueMap.has(fingerprint)) {
+          // Сохраняем первое сканирование
           uniqueMap.set(fingerprint, scan);
         } else {
           // Если уже есть, берем самое раннее сканирование
@@ -540,7 +557,19 @@ app.get('/api/users', (req, res) => {
           }
         }
       });
-      scans = Array.from(uniqueMap.values());
+      
+      // Добавляем количество сканирований к каждому уникальному пользователю
+      scans = Array.from(uniqueMap.values()).map(scan => {
+        const fingerprint = `${scan.ip_address || ''}_${scan.user_agent || ''}`;
+        scan.scan_count = scanCounts.get(fingerprint) || 1;
+        return scan;
+      });
+    } else {
+      // Если не уникальные, каждое сканирование имеет count = 1
+      scans = scans.map(scan => {
+        scan.scan_count = 1;
+        return scan;
+      });
     }
 
     res.json({
