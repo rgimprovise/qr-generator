@@ -5,7 +5,11 @@
  * Подсчитывает сканирования из логов, находит ошибки и сравнивает с БД
  * 
  * Использование: 
- *   node analyze-logs.js [--log-dir=/path/to/logs]
+ *   node analyze-logs.js [--log-dir=/path/to/logs] [--debug] [--samples]
+ * 
+ * Опции:
+ *   --debug, -d     - Включить отладочный режим (показывает примеры логов)
+ *   --samples, -s   - Показать примеры строк из каждого лога
  * 
  * Где искать логи:
  *   1. PM2 логи: ./logs/ или ~/.pm2/logs/
@@ -28,9 +32,16 @@ const execAsync = promisify(exec);
 // Парсинг аргументов командной строки
 const args = process.argv.slice(2);
 let logDir = null;
+let debugMode = false;
+let showSamples = false;
+
 args.forEach(arg => {
   if (arg.startsWith('--log-dir=')) {
     logDir = arg.split('=')[1];
+  } else if (arg === '--debug' || arg === '-d') {
+    debugMode = true;
+  } else if (arg === '--samples' || arg === '-s') {
+    showSamples = true;
   }
 });
 
@@ -95,41 +106,59 @@ function parseCaddyJSON(line) {
     let uri = null;
     let timestamp = null;
     
-    // Вариант 1: log.request.uri
-    if (log.request && log.request.uri) {
-      uri = log.request.uri;
+    // Вариант 1: log.request.uri (полный путь)
+    if (log.request) {
+      if (log.request.uri) {
+        uri = log.request.uri;
+      } else if (log.request.path) {
+        uri = log.request.path;
+      } else if (log.request.url) {
+        uri = log.request.url;
+      }
       timestamp = log.ts ? new Date(log.ts * 1000).toISOString() : null;
     }
-    // Вариант 2: log.uri
+    // Вариант 2: log.uri (прямо в корне)
     else if (log.uri) {
       uri = log.uri;
       timestamp = log.ts ? new Date(log.ts * 1000).toISOString() : null;
     }
-    // Вариант 3: log.request.path или log.path
-    else if (log.request && log.request.path) {
-      uri = log.request.path;
-      timestamp = log.ts ? new Date(log.ts * 1000).toISOString() : null;
-    }
+    // Вариант 3: log.path
     else if (log.path) {
       uri = log.path;
       timestamp = log.ts ? new Date(log.ts * 1000).toISOString() : null;
     }
+    // Вариант 4: log.url
+    else if (log.url) {
+      uri = log.url;
+      timestamp = log.ts ? new Date(log.ts * 1000).toISOString() : null;
+    }
     
     if (uri) {
-      // Ищем паттерн /r/shortCode в URI
+      // Ищем паттерн /r/shortCode в URI (может быть полный URL или путь)
       const match = uri.match(/\/r\/([a-zA-Z0-9_-]+)/);
       if (match) {
         return {
           shortCode: match[1],
           timestamp: timestamp,
           method: (log.request && log.request.method) || log.method || 'GET',
-          status: log.status || null,
+          status: log.status || log.response?.status_code || null,
           ip: (log.request && log.request.remote_ip) || log.remote_ip || null
         };
       }
+      
+      // В режиме отладки показываем примеры URI, которые не совпали
+      if (debugMode && uri.includes('r/')) {
+        console.log(`   [DEBUG] Found 'r/' in URI but no match: ${uri.substring(0, 100)}`);
+      }
+    } else if (debugMode && log.request) {
+      // В режиме отладки показываем структуру request
+      console.log(`   [DEBUG] Request structure: ${JSON.stringify(Object.keys(log.request)).substring(0, 200)}`);
     }
   } catch (e) {
     // Не JSON или некорректный JSON
+    if (debugMode && line.trim().startsWith('{')) {
+      console.log(`   [DEBUG] JSON parse error: ${e.message}`);
+    }
     return null;
   }
   return null;
@@ -160,6 +189,16 @@ function parseLogLine(line, logFile) {
       shortCode = parsedData.shortCode;
       if (parsedData.timestamp) {
         timestamp = parsedData.timestamp;
+      }
+    } else if (debugMode && line.includes('request')) {
+      // В режиме отладки показываем примеры JSON логов
+      try {
+        const log = JSON.parse(line);
+        if (log.request && (log.request.uri || log.request.path)) {
+          console.log(`   [DEBUG] JSON log example: uri=${log.request.uri || log.request.path}`);
+        }
+      } catch (e) {
+        // Игнорируем
       }
     }
   }
@@ -311,8 +350,16 @@ async function readLogFile(filePath) {
       });
 
       let lineCount = 0;
+      let sampleCount = 0;
       rl.on('line', (line) => {
         lineCount++;
+        
+        // В режиме показа примеров собираем первые несколько строк
+        if (showSamples && sampleCount < 3 && line.trim().length > 0) {
+          console.log(`   [SAMPLE ${sampleCount + 1}] ${line.substring(0, 200)}...`);
+          sampleCount++;
+        }
+        
         parseLogLine(line, filePath);
       });
 
