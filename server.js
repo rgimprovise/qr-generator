@@ -84,6 +84,55 @@ app.post('/api/qr/create', async (req, res) => {
   }
 });
 
+// Вспомогательная функция для построения URL редиректа с UTM метками
+function buildRedirectUrl(qrCode) {
+  let redirectUrl = qrCode.original_url;
+  
+  try {
+    const targetUrl = new URL(qrCode.original_url);
+    
+    // Проверяем, есть ли уже UTM метки в URL
+    const hasUtmSource = targetUrl.searchParams.has('utm_source');
+    const hasUtmMedium = targetUrl.searchParams.has('utm_medium');
+    const hasUtmCampaign = targetUrl.searchParams.has('utm_campaign');
+    
+    // Если UTM меток нет, добавляем их
+    if (!hasUtmSource) {
+      targetUrl.searchParams.set('utm_source', 'qr');
+    }
+    if (!hasUtmMedium) {
+      targetUrl.searchParams.set('utm_medium', 'qr_code');
+    }
+    if (!hasUtmCampaign) {
+      targetUrl.searchParams.set('utm_campaign', qrCode.title || qrCode.short_code || 'qr_campaign');
+    }
+    
+    // Всегда добавляем/обновляем utm_content с short_code для идентификации конкретного QR
+    targetUrl.searchParams.set('utm_content', qrCode.short_code);
+    
+    // Добавляем уникальный параметр для точного отслеживания переходов через QR
+    // Это позволит в Яндекс.Метрике фильтровать только переходы через QR-коды
+    targetUrl.searchParams.set('qr_scan', 'true');
+    targetUrl.searchParams.set('qr_id', qrCode.short_code);
+    
+    redirectUrl = targetUrl.toString();
+  } catch (urlError) {
+    // Если URL некорректный, используем оригинальный URL и добавляем параметры через строковую конкатенацию
+    console.error('Ошибка при добавлении параметров:', urlError);
+    const separator = redirectUrl.includes('?') ? '&' : '?';
+    const qrParams = `qr_scan=true&qr_id=${qrCode.short_code}`;
+    
+    // Проверяем, есть ли уже UTM метки в строке
+    if (!redirectUrl.includes('utm_source=')) {
+      redirectUrl = `${redirectUrl}${separator}utm_source=qr&utm_medium=qr_code&utm_campaign=${encodeURIComponent(qrCode.title || qrCode.short_code || 'qr_campaign')}&utm_content=${qrCode.short_code}&${qrParams}`;
+    } else {
+      redirectUrl = `${redirectUrl}${separator}${qrParams}`;
+    }
+  }
+  
+  return redirectUrl;
+}
+
 // Редирект и отслеживание
 app.get('/r/:shortCode', (req, res) => {
   const { shortCode } = req.params;
@@ -124,69 +173,65 @@ app.get('/r/:shortCode', (req, res) => {
       language: language.split(',')[0] || ''
     };
 
-    db.run(`
-      INSERT INTO scans (
-        qr_code_id, ip_address, user_agent, browser, browser_version,
-        os, os_version, device_type, device_vendor, device_model,
-        country, region, city, latitude, longitude, timezone, referrer, language
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, Object.values(scanData), (err) => {
-      if (err) {
-        console.error('Ошибка сохранения данных сканирования:', err);
-      }
+    // КРИТИЧЕСКИ ВАЖНО: Используем транзакцию для атомарности операций
+    // Это гарантирует, что либо обе операции выполнятся, либо ни одна
+    db.serialize(() => {
+      db.run('BEGIN TRANSACTION', (beginErr) => {
+        if (beginErr) {
+          console.error('Ошибка начала транзакции:', beginErr);
+          return res.status(500).send('Ошибка сервера при обработке сканирования');
+        }
+
+        // Вставляем запись о сканировании
+        db.run(`
+          INSERT INTO scans (
+            qr_code_id, ip_address, user_agent, browser, browser_version,
+            os, os_version, device_type, device_vendor, device_model,
+            country, region, city, latitude, longitude, timezone, referrer, language
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `, Object.values(scanData), function(insertErr) {
+          if (insertErr) {
+            console.error('Ошибка сохранения данных сканирования:', insertErr);
+            db.run('ROLLBACK', () => {
+              // Даже при ошибке делаем редирект, чтобы пользователь не остался на странице
+              // Но счетчик не увеличится, что правильно
+              const redirectUrl = buildRedirectUrl(qrCode);
+              res.redirect(redirectUrl);
+            });
+            return;
+          }
+
+          // Обновляем счетчик сканирований только после успешного INSERT
+          db.run('UPDATE qr_codes SET total_scans = total_scans + 1 WHERE id = ?', [qrCode.id], (updateErr) => {
+            if (updateErr) {
+              console.error('Ошибка обновления счетчика сканирований:', updateErr);
+              db.run('ROLLBACK', () => {
+                // При ошибке обновления счетчика откатываем и INSERT
+                const redirectUrl = buildRedirectUrl(qrCode);
+                res.redirect(redirectUrl);
+              });
+              return;
+            }
+
+            // Коммитим транзакцию
+            db.run('COMMIT', (commitErr) => {
+              if (commitErr) {
+                console.error('Ошибка коммита транзакции:', commitErr);
+                db.run('ROLLBACK', () => {
+                  const redirectUrl = buildRedirectUrl(qrCode);
+                  res.redirect(redirectUrl);
+                });
+                return;
+              }
+
+              // Только после успешного коммита делаем редирект
+              const redirectUrl = buildRedirectUrl(qrCode);
+              res.redirect(redirectUrl);
+            });
+          });
+        });
+      });
     });
-
-    // Обновляем счетчик сканирований
-    db.run('UPDATE qr_codes SET total_scans = total_scans + 1 WHERE id = ?', [qrCode.id]);
-
-    // Добавляем уникальный маркер QR-кода для точного отслеживания переходов через QR
-    // Это позволит различать переходы через QR и прямые переходы по ссылкам с теми же UTM метками
-    let redirectUrl = qrCode.original_url;
-    
-    try {
-      const targetUrl = new URL(qrCode.original_url);
-      
-      // Проверяем, есть ли уже UTM метки в URL
-      const hasUtmSource = targetUrl.searchParams.has('utm_source');
-      const hasUtmMedium = targetUrl.searchParams.has('utm_medium');
-      const hasUtmCampaign = targetUrl.searchParams.has('utm_campaign');
-      
-      // Если UTM меток нет, добавляем их
-      if (!hasUtmSource) {
-        targetUrl.searchParams.set('utm_source', 'qr');
-      }
-      if (!hasUtmMedium) {
-        targetUrl.searchParams.set('utm_medium', 'qr_code');
-      }
-      if (!hasUtmCampaign) {
-        targetUrl.searchParams.set('utm_campaign', qrCode.title || qrCode.short_code || 'qr_campaign');
-      }
-      
-      // Всегда добавляем/обновляем utm_content с short_code для идентификации конкретного QR
-      targetUrl.searchParams.set('utm_content', qrCode.short_code);
-      
-      // Добавляем уникальный параметр для точного отслеживания переходов через QR
-      // Это позволит в Яндекс.Метрике фильтровать только переходы через QR-коды
-      targetUrl.searchParams.set('qr_scan', 'true');
-      targetUrl.searchParams.set('qr_id', qrCode.short_code);
-      
-      redirectUrl = targetUrl.toString();
-    } catch (urlError) {
-      // Если URL некорректный, используем оригинальный URL и добавляем параметры через строковую конкатенацию
-      console.error('Ошибка при добавлении параметров:', urlError);
-      const separator = redirectUrl.includes('?') ? '&' : '?';
-      const qrParams = `qr_scan=true&qr_id=${qrCode.short_code}`;
-      
-      // Проверяем, есть ли уже UTM метки в строке
-      if (!redirectUrl.includes('utm_source=')) {
-        redirectUrl = `${redirectUrl}${separator}utm_source=qr&utm_medium=qr_code&utm_campaign=${encodeURIComponent(qrCode.title || qrCode.short_code || 'qr_campaign')}&utm_content=${qrCode.short_code}&${qrParams}`;
-      } else {
-        redirectUrl = `${redirectUrl}${separator}${qrParams}`;
-      }
-    }
-    
-    // Редирект на оригинальный URL с параметрами для отслеживания
-    res.redirect(redirectUrl);
   });
 });
 
@@ -197,6 +242,77 @@ app.get('/api/qr/list', (req, res) => {
       return res.status(500).json({ error: 'Ошибка получения данных' });
     }
     res.json(rows);
+  });
+});
+
+// API: Проверка целостности данных (сравнение total_scans с реальным количеством записей)
+app.get('/api/integrity-check', (req, res) => {
+  db.all(`
+    SELECT 
+      q.id,
+      q.short_code,
+      q.title,
+      q.total_scans as stored_count,
+      COUNT(s.id) as actual_count,
+      (q.total_scans - COUNT(s.id)) as difference
+    FROM qr_codes q
+    LEFT JOIN scans s ON q.id = s.qr_code_id
+    GROUP BY q.id, q.short_code, q.title, q.total_scans
+    ORDER BY ABS(q.total_scans - COUNT(s.id)) DESC
+  `, [], (err, rows) => {
+    if (err) {
+      return res.status(500).json({ error: 'Ошибка проверки целостности' });
+    }
+
+    const issues = rows.filter(row => row.difference !== 0);
+    const totalIssues = issues.length;
+    const totalQR = rows.length;
+    
+    // Автоматическое исправление рассинхронизации
+    if (req.query.autoFix === 'true' && issues.length > 0) {
+      const fixPromises = issues.map(issue => {
+        return new Promise((resolve, reject) => {
+          db.run(
+            'UPDATE qr_codes SET total_scans = ? WHERE id = ?',
+            [issue.actual_count, issue.id],
+            (updateErr) => {
+              if (updateErr) {
+                reject(updateErr);
+              } else {
+                resolve({ id: issue.id, fixed: true });
+              }
+            }
+          );
+        });
+      });
+
+      Promise.all(fixPromises)
+        .then(fixed => {
+          res.json({
+            success: true,
+            message: `Исправлено ${fixed.length} рассинхронизаций`,
+            fixed: fixed,
+            summary: {
+              total_qr: totalQR,
+              issues_found: totalIssues,
+              issues_fixed: fixed.length
+            }
+          });
+        })
+        .catch(fixErr => {
+          res.status(500).json({ error: 'Ошибка при исправлении', details: fixErr });
+        });
+    } else {
+      res.json({
+        summary: {
+          total_qr: totalQR,
+          issues_found: totalIssues,
+          all_synced: totalIssues === 0
+        },
+        issues: issues,
+        all_data: rows
+      });
+    }
   });
 });
 

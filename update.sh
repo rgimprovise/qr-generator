@@ -115,6 +115,84 @@ if ! npm install --production; then
     exit 1
 fi
 
+# КРИТИЧЕСКАЯ ПРОВЕРКА: Проверка что QR коды на месте перед миграцией
+if [ -f "qr_codes.db" ] && command -v sqlite3 &> /dev/null; then
+    echo -e "${YELLOW}🔍 Проверка QR кодов перед миграцией...${NC}"
+    QR_BEFORE_MIGRATION=$(sqlite3 qr_codes.db "SELECT COUNT(*) FROM qr_codes;" 2>/dev/null || echo "0")
+    SCANS_BEFORE_MIGRATION=$(sqlite3 qr_codes.db "SELECT COUNT(*) FROM scans;" 2>/dev/null || echo "0")
+    
+    # Сохраняем список всех short_code для проверки после миграции
+    SHORT_CODES_BEFORE=$(sqlite3 qr_codes.db "SELECT short_code FROM qr_codes ORDER BY id;" 2>/dev/null || echo "")
+    
+    if [ "$QR_BEFORE_MIGRATION" = "0" ]; then
+        echo -e "${RED}❌ КРИТИЧЕСКАЯ ОШИБКА: В базе данных нет QR кодов!${NC}"
+        echo -e "${YELLOW}💾 Восстановление из бэкапа: ${BACKUP_FILE}${NC}"
+        if [ -f "$BACKUP_FILE" ]; then
+            cp "$BACKUP_FILE" qr_codes.db
+            echo -e "${GREEN}✅ База данных восстановлена из бэкапа${NC}"
+        else
+            echo -e "${RED}❌ Бэкап не найден! Прерываем обновление!${NC}"
+            exit 1
+        fi
+    else
+        echo -e "${GREEN}✅ Найдено QR кодов: ${QR_BEFORE_MIGRATION}, сканирований: ${SCANS_BEFORE_MIGRATION}${NC}"
+    fi
+fi
+
+# БЕЗОПАСНАЯ МИГРАЦИЯ: Пересчет счетчиков сканирований (не трогает сами QR коды)
+if [ -f "migrate-scans-count.js" ] && [ -f "qr_codes.db" ]; then
+    echo -e "${YELLOW}🔄 Выполнение миграции: пересчет счетчиков сканирований...${NC}"
+    echo -e "${BLUE}   (Это безопасно: обновляются только счетчики, QR коды не изменяются)${NC}"
+    
+    # Сначала проверка в режиме dry-run
+    if node migrate-scans-count.js --dry-run 2>/dev/null; then
+        echo -e "${GREEN}✅ Проверка миграции прошла успешно${NC}"
+        
+        # Выполняем реальную миграцию
+        if node migrate-scans-count.js 2>/dev/null; then
+            echo -e "${GREEN}✅ Миграция выполнена успешно${NC}"
+            
+            # КРИТИЧЕСКАЯ ПРОВЕРКА: Убеждаемся что QR коды не потеряны и не изменились
+            if command -v sqlite3 &> /dev/null; then
+                QR_AFTER_MIGRATION=$(sqlite3 qr_codes.db "SELECT COUNT(*) FROM qr_codes;" 2>/dev/null || echo "0")
+                SHORT_CODES_AFTER=$(sqlite3 qr_codes.db "SELECT short_code FROM qr_codes ORDER BY id;" 2>/dev/null || echo "")
+                
+                # Проверка количества
+                if [ "$QR_AFTER_MIGRATION" != "$QR_BEFORE_MIGRATION" ]; then
+                    echo -e "${RED}❌ КРИТИЧЕСКАЯ ОШИБКА: Количество QR кодов изменилось после миграции!${NC}"
+                    echo -e "${RED}   Было: ${QR_BEFORE_MIGRATION}, Стало: ${QR_AFTER_MIGRATION}${NC}"
+                    echo -e "${YELLOW}💾 Восстановление из бэкапа: ${BACKUP_FILE}${NC}"
+                    if [ -f "$BACKUP_FILE" ]; then
+                        cp "$BACKUP_FILE" qr_codes.db
+                        echo -e "${GREEN}✅ База данных восстановлена из бэкапа${NC}"
+                    fi
+                    exit 1
+                fi
+                
+                # Проверка что все short_code на месте (самый важный тест!)
+                if [ "$SHORT_CODES_BEFORE" != "$SHORT_CODES_AFTER" ]; then
+                    echo -e "${RED}❌ КРИТИЧЕСКАЯ ОШИБКА: Список QR кодов изменился после миграции!${NC}"
+                    echo -e "${RED}   Это означает, что QR коды были изменены или удалены!${NC}"
+                    echo -e "${YELLOW}💾 Восстановление из бэкапа: ${BACKUP_FILE}${NC}"
+                    if [ -f "$BACKUP_FILE" ]; then
+                        cp "$BACKUP_FILE" qr_codes.db
+                        echo -e "${GREEN}✅ База данных восстановлена из бэкапа${NC}"
+                    fi
+                    exit 1
+                fi
+                
+                echo -e "${GREEN}✅ Проверка: Все QR коды сохранены (${QR_AFTER_MIGRATION} шт.)${NC}"
+                echo -e "${GREEN}✅ Проверка: Все short_code идентичны (QR коды не изменены)${NC}"
+            fi
+        else
+            echo -e "${YELLOW}⚠️  Миграция завершилась с предупреждениями, но продолжаем...${NC}"
+        fi
+    else
+        echo -e "${YELLOW}⚠️  Пропуск миграции (скрипт не найден или ошибка)${NC}"
+    fi
+    echo ""
+fi
+
 # Перезапуск приложения
 echo -e "${YELLOW}🔄 Перезапуск приложения...${NC}"
 if ! pm2 restart qr-generator; then
