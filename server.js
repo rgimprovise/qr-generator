@@ -139,8 +139,54 @@ app.get('/r/:shortCode', (req, res) => {
     // Обновляем счетчик сканирований
     db.run('UPDATE qr_codes SET total_scans = total_scans + 1 WHERE id = ?', [qrCode.id]);
 
-    // Редирект на оригинальный URL
-    res.redirect(qrCode.original_url);
+    // Добавляем уникальный маркер QR-кода для точного отслеживания переходов через QR
+    // Это позволит различать переходы через QR и прямые переходы по ссылкам с теми же UTM метками
+    let redirectUrl = qrCode.original_url;
+    
+    try {
+      const targetUrl = new URL(qrCode.original_url);
+      
+      // Проверяем, есть ли уже UTM метки в URL
+      const hasUtmSource = targetUrl.searchParams.has('utm_source');
+      const hasUtmMedium = targetUrl.searchParams.has('utm_medium');
+      const hasUtmCampaign = targetUrl.searchParams.has('utm_campaign');
+      
+      // Если UTM меток нет, добавляем их
+      if (!hasUtmSource) {
+        targetUrl.searchParams.set('utm_source', 'qr');
+      }
+      if (!hasUtmMedium) {
+        targetUrl.searchParams.set('utm_medium', 'qr_code');
+      }
+      if (!hasUtmCampaign) {
+        targetUrl.searchParams.set('utm_campaign', qrCode.title || qrCode.short_code || 'qr_campaign');
+      }
+      
+      // Всегда добавляем/обновляем utm_content с short_code для идентификации конкретного QR
+      targetUrl.searchParams.set('utm_content', qrCode.short_code);
+      
+      // Добавляем уникальный параметр для точного отслеживания переходов через QR
+      // Это позволит в Яндекс.Метрике фильтровать только переходы через QR-коды
+      targetUrl.searchParams.set('qr_scan', 'true');
+      targetUrl.searchParams.set('qr_id', qrCode.short_code);
+      
+      redirectUrl = targetUrl.toString();
+    } catch (urlError) {
+      // Если URL некорректный, используем оригинальный URL и добавляем параметры через строковую конкатенацию
+      console.error('Ошибка при добавлении параметров:', urlError);
+      const separator = redirectUrl.includes('?') ? '&' : '?';
+      const qrParams = `qr_scan=true&qr_id=${qrCode.short_code}`;
+      
+      // Проверяем, есть ли уже UTM метки в строке
+      if (!redirectUrl.includes('utm_source=')) {
+        redirectUrl = `${redirectUrl}${separator}utm_source=qr&utm_medium=qr_code&utm_campaign=${encodeURIComponent(qrCode.title || qrCode.short_code || 'qr_campaign')}&utm_content=${qrCode.short_code}&${qrParams}`;
+      } else {
+        redirectUrl = `${redirectUrl}${separator}${qrParams}`;
+      }
+    }
+    
+    // Редирект на оригинальный URL с параметрами для отслеживания
+    res.redirect(redirectUrl);
   });
 });
 
