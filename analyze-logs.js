@@ -21,6 +21,9 @@ const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
 const sqlite3 = require('sqlite3').verbose();
+const { exec } = require('child_process');
+const { promisify } = require('util');
+const execAsync = promisify(exec);
 
 // Парсинг аргументов командной строки
 const args = process.argv.slice(2);
@@ -65,8 +68,11 @@ const stats = {
 const scanPatterns = [
   /GET\s+\/r\/([a-zA-Z0-9_-]+)/i,  // Express/стандартный формат
   /"GET\s+\/r\/([a-zA-Z0-9_-]+)/i,  // Nginx access log
-  /\/r\/([a-zA-Z0-9_-]+)/i,         // Упрощенный паттерн
-  /GET.*\/r\/([a-zA-Z0-9_-]+)/i     // Более гибкий
+  /\/r\/([a-zA-Z0-9_-]+)/i,         // Упрощенный паттерн (самый общий)
+  /GET.*\/r\/([a-zA-Z0-9_-]+)/i,    // Более гибкий
+  /\/r\/([a-zA-Z0-9_-]+)[\s"?#]/,   // С учетом конца строки или параметров
+  /uri.*\/r\/([a-zA-Z0-9_-]+)/i,    // Для JSON логов с полем uri
+  /path.*\/r\/([a-zA-Z0-9_-]+)/i    // Для JSON логов с полем path
 ];
 
 const errorPattern = /(error|Error|ERROR|ошибка|Ошибка)/i;
@@ -77,6 +83,57 @@ const timestampPattern = /(\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2})|(\d{2}\/\d{2
 
 // Nginx/Caddy access log patterns
 const nginxLogPattern = /(\d+\.\d+\.\d+\.\d+)\s+-\s+-\s+\[([^\]]+)\]\s+"(GET|POST|HEAD)\s+(\/r\/([a-zA-Z0-9_-]+))/i;
+
+/**
+ * Парсит JSON строку лога Caddy
+ */
+function parseCaddyJSON(line) {
+  try {
+    const log = JSON.parse(line);
+    
+    // Проверяем структуру лога Caddy (разные варианты)
+    let uri = null;
+    let timestamp = null;
+    
+    // Вариант 1: log.request.uri
+    if (log.request && log.request.uri) {
+      uri = log.request.uri;
+      timestamp = log.ts ? new Date(log.ts * 1000).toISOString() : null;
+    }
+    // Вариант 2: log.uri
+    else if (log.uri) {
+      uri = log.uri;
+      timestamp = log.ts ? new Date(log.ts * 1000).toISOString() : null;
+    }
+    // Вариант 3: log.request.path или log.path
+    else if (log.request && log.request.path) {
+      uri = log.request.path;
+      timestamp = log.ts ? new Date(log.ts * 1000).toISOString() : null;
+    }
+    else if (log.path) {
+      uri = log.path;
+      timestamp = log.ts ? new Date(log.ts * 1000).toISOString() : null;
+    }
+    
+    if (uri) {
+      // Ищем паттерн /r/shortCode в URI
+      const match = uri.match(/\/r\/([a-zA-Z0-9_-]+)/);
+      if (match) {
+        return {
+          shortCode: match[1],
+          timestamp: timestamp,
+          method: (log.request && log.request.method) || log.method || 'GET',
+          status: log.status || null,
+          ip: (log.request && log.request.remote_ip) || log.remote_ip || null
+        };
+      }
+    }
+  } catch (e) {
+    // Не JSON или некорректный JSON
+    return null;
+  }
+  return null;
+}
 
 /**
  * Парсит строку лога и извлекает информацию
@@ -94,18 +151,35 @@ function parseLogLine(line, logFile) {
 
   // Проверяем на запрос сканирования (разные форматы)
   let shortCode = null;
+  let parsedData = null;
   
-  // Сначала пробуем Nginx/Caddy формат
-  const nginxMatch = line.match(nginxLogPattern);
-  if (nginxMatch) {
-    shortCode = nginxMatch[5];
-  } else {
-    // Пробуем другие паттерны
-    for (const pattern of scanPatterns) {
-      const match = line.match(pattern);
-      if (match) {
-        shortCode = match[1];
-        break;
+  // Сначала пробуем JSON формат (Caddy)
+  if (line.trim().startsWith('{')) {
+    parsedData = parseCaddyJSON(line);
+    if (parsedData && parsedData.shortCode) {
+      shortCode = parsedData.shortCode;
+      if (parsedData.timestamp) {
+        timestamp = parsedData.timestamp;
+      }
+    }
+  }
+  
+  // Если не JSON, пробуем Nginx/Caddy текстовый формат
+  if (!shortCode) {
+    const nginxMatch = line.match(nginxLogPattern);
+    if (nginxMatch) {
+      shortCode = nginxMatch[5];
+      if (nginxMatch[2]) {
+        timestamp = nginxMatch[2];
+      }
+    } else {
+      // Пробуем другие паттерны
+      for (const pattern of scanPatterns) {
+        const match = line.match(pattern);
+        if (match) {
+          shortCode = match[1];
+          break;
+        }
       }
     }
   }
@@ -117,19 +191,40 @@ function parseLogLine(line, logFile) {
     stats.scansByQR.set(shortCode, (stats.scansByQR.get(shortCode) || 0) + 1);
     
     // Подсчет по датам
-    const date = timestamp ? new Date(timestamp).toISOString().split('T')[0] : 'unknown';
+    let date = 'unknown';
+    if (timestamp) {
+      try {
+        const dateObj = new Date(timestamp);
+        if (!isNaN(dateObj.getTime())) {
+          date = dateObj.toISOString().split('T')[0];
+        }
+      } catch (e) {
+        // Используем 'unknown'
+      }
+    }
     stats.scansByDate.set(date, (stats.scansByDate.get(date) || 0) + 1);
     
     // Сохраняем запрос
     stats.scanRequests.push({
       shortCode,
       timestamp,
-      line: line.substring(0, 200) // Первые 200 символов
+      line: line.substring(0, 200), // Первые 200 символов
+      logFile: path.basename(logFile)
     });
     
     // Обновляем временные метки
     if (timestamp) {
-      const ts = new Date(timestamp);
+      let ts;
+      try {
+        ts = new Date(timestamp);
+        if (isNaN(ts.getTime())) {
+          // Если не удалось распарсить, пропускаем
+          return;
+        }
+      } catch (e) {
+        return;
+      }
+      
       if (!stats.timestamps.firstScan || ts < stats.timestamps.firstScan) {
         stats.timestamps.firstScan = ts;
       }
@@ -172,35 +267,66 @@ function parseLogLine(line, logFile) {
 }
 
 /**
- * Читает файл лога построчно
+ * Читает файл лога построчно (поддерживает .gz)
  */
 async function readLogFile(filePath) {
-  return new Promise((resolve, reject) => {
+  return new Promise(async (resolve, reject) => {
     if (!fs.existsSync(filePath)) {
       resolve(); // Файл не существует, пропускаем
       return;
     }
 
-    const fileStream = fs.createReadStream(filePath);
-    const rl = readline.createInterface({
-      input: fileStream,
-      crlfDelay: Infinity
-    });
+    let fileStream;
+    
+    // Обработка сжатых файлов
+    if (filePath.endsWith('.gz')) {
+      try {
+        // Используем gunzip через pipe
+        const { stdout } = await execAsync(`gunzip -c "${filePath}"`);
+        // Создаем временный поток из stdout
+        const lines = stdout.split('\n');
+        let lineCount = 0;
+        for (const line of lines) {
+          if (line.trim()) {
+            lineCount++;
+            parseLogLine(line, filePath);
+          }
+        }
+        console.log(`   ✅ Обработано строк: ${lineCount.toLocaleString()}`);
+        resolve();
+        return;
+      } catch (err) {
+        console.log(`   ⚠️  Не удалось распаковать .gz файл: ${err.message}`);
+        resolve(); // Пропускаем файл, но не останавливаем обработку
+        return;
+      }
+    }
 
-    let lineCount = 0;
-    rl.on('line', (line) => {
-      lineCount++;
-      parseLogLine(line, filePath);
-    });
+    // Обычный файл
+    try {
+      fileStream = fs.createReadStream(filePath);
+      const rl = readline.createInterface({
+        input: fileStream,
+        crlfDelay: Infinity
+      });
 
-    rl.on('close', () => {
-      console.log(`   ✅ Обработано строк: ${lineCount.toLocaleString()}`);
-      resolve();
-    });
+      let lineCount = 0;
+      rl.on('line', (line) => {
+        lineCount++;
+        parseLogLine(line, filePath);
+      });
 
-    rl.on('error', (err) => {
+      rl.on('close', () => {
+        console.log(`   ✅ Обработано строк: ${lineCount.toLocaleString()}`);
+        resolve();
+      });
+
+      rl.on('error', (err) => {
+        reject(err);
+      });
+    } catch (err) {
       reject(err);
-    });
+    }
   });
 }
 
